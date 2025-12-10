@@ -99,6 +99,13 @@ object NativeStreamer {
             return false
         }
 
+        Log.i(TAG, "=== Creating SRT Pipeline ===")
+        Log.i(TAG, "Target: srt://${config.srtHost}:${config.srtPort}")
+        Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
+        Log.i(TAG, "Video: ${config.videoWidth}x${config.videoHeight} @ ${config.frameRate}fps, ${config.videoBitrate/1000}kbps")
+        Log.i(TAG, "Audio: ${config.sampleRate}Hz, ${config.audioBitrate/1000}kbps")
+        Log.i(TAG, "Proxy: ${if (config.useProxy) "${config.proxyHost}:${config.proxyPort}" else "disabled"}")
+
         return nativeCreatePipeline(
             config.srtHost,
             config.srtPort,
@@ -124,7 +131,14 @@ object NativeStreamer {
             Log.e(TAG, "Cannot start: not initialized")
             return false
         }
-        return nativeStart()
+        Log.i(TAG, "=== Starting SRT Stream ===")
+        val result = nativeStart()
+        if (result) {
+            Log.i(TAG, "Stream started successfully")
+        } else {
+            Log.e(TAG, "!!! Stream failed to start !!!")
+        }
+        return result
     }
 
     /**
@@ -132,7 +146,9 @@ object NativeStreamer {
      */
     fun stop() {
         if (initialized) {
+            Log.i(TAG, "=== Stopping SRT Stream ===")
             nativeStop()
+            Log.i(TAG, "Stream stopped")
         }
     }
 

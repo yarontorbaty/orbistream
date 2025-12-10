@@ -88,6 +88,16 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
         srtUri += "?streamid=" + config.streamId;
     }
 
+    LOGI("=== SRT CONNECTION CONFIG ===");
+    LOGI("SRT URI: %s", srtUri.c_str());
+    LOGI("Video: %dx%d @ %d fps, bitrate %d bps", 
+         config.videoWidth, config.videoHeight, config.frameRate, config.videoBitrate);
+    LOGI("Audio: %d Hz, bitrate %d bps", config.sampleRate, config.audioBitrate);
+    if (config.useProxy) {
+        LOGI("Proxy: %s:%d (Bondix)", config.proxyHost.c_str(), config.proxyPort);
+    }
+    LOGI("=============================");
+
     // Configure SRT sink with proxy if enabled
     std::string srtSinkProps = "uri=\"" + srtUri + "\" latency=500";
     
@@ -138,13 +148,17 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     currentConfig = config;
     std::string pipelineStr = buildPipelineString(config);
     
-    LOGI("Creating pipeline: %s", pipelineStr.c_str());
+    LOGI("=== CREATING GSTREAMER PIPELINE ===");
+    LOGI("Pipeline string length: %zu chars", pipelineStr.length());
+    LOGD("Full pipeline: %s", pipelineStr.c_str());
     
     GError* error = nullptr;
     pipeline = gst_parse_launch(pipelineStr.c_str(), &error);
     
     if (error) {
-        LOGE("Pipeline creation failed: %s", error->message);
+        LOGE("!!! PIPELINE CREATION FAILED !!!");
+        LOGE("Error code: %d", error->code);
+        LOGE("Error message: %s", error->message);
         if (errorCallback) {
             errorCallback(error->message);
         }
@@ -153,9 +167,11 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     }
     
     if (!pipeline) {
-        LOGE("Pipeline is null");
+        LOGE("!!! Pipeline is null after creation !!!");
         return false;
     }
+    
+    LOGI("Pipeline created successfully");
     
     // Get appsrc elements for pushing data
     videoAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "video_src");
@@ -190,15 +206,30 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
 bool SrtStreamer::Impl::start() {
 #if GSTREAMER_AVAILABLE
     if (!pipeline) {
-        LOGE("No pipeline to start");
+        LOGE("!!! No pipeline to start !!!");
         return false;
     }
     
+    LOGI("=== STARTING SRT STREAM ===");
+    LOGI("Setting pipeline to PLAYING state...");
+    
     GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
+    
+    const char* stateChangeStr;
+    switch (ret) {
+        case GST_STATE_CHANGE_SUCCESS: stateChangeStr = "SUCCESS"; break;
+        case GST_STATE_CHANGE_ASYNC: stateChangeStr = "ASYNC (connecting...)"; break;
+        case GST_STATE_CHANGE_NO_PREROLL: stateChangeStr = "NO_PREROLL"; break;
+        case GST_STATE_CHANGE_FAILURE: stateChangeStr = "FAILURE"; break;
+        default: stateChangeStr = "UNKNOWN"; break;
+    }
+    LOGI("State change result: %s", stateChangeStr);
+    
     if (ret == GST_STATE_CHANGE_FAILURE) {
-        LOGE("Failed to start pipeline");
+        LOGE("!!! FAILED TO START PIPELINE !!!");
+        LOGE("SRT connection may have failed - check host/port");
         if (errorCallback) {
-            errorCallback("Failed to start streaming pipeline");
+            errorCallback("Failed to start streaming pipeline - SRT connection failed?");
         }
         return false;
     }
@@ -206,13 +237,16 @@ bool SrtStreamer::Impl::start() {
     streaming = true;
     startTime = std::chrono::steady_clock::now();
     
-    // Start main loop in separate thread
+    // Start main loop in separate thread for bus messages
     mainLoop = g_main_loop_new(nullptr, FALSE);
     mainLoopThread = std::thread([this]() {
+        LOGI("GStreamer main loop started");
         g_main_loop_run(mainLoop);
+        LOGI("GStreamer main loop ended");
     });
     
-    LOGI("Streaming started");
+    LOGI("=== SRT STREAM STARTED ===");
+    LOGI("Streaming to: %s:%d", currentConfig.srtHost.c_str(), currentConfig.srtPort);
     if (stateCallback) {
         stateCallback(true, "Streaming started");
     }
@@ -231,15 +265,21 @@ bool SrtStreamer::Impl::start() {
 
 void SrtStreamer::Impl::stop() {
 #if GSTREAMER_AVAILABLE
-    if (!streaming) return;
+    if (!streaming) {
+        LOGD("Stop called but not streaming");
+        return;
+    }
     
+    LOGI("=== STOPPING SRT STREAM ===");
     streaming = false;
     
     if (pipeline) {
+        LOGI("Setting pipeline to NULL state...");
         gst_element_set_state(pipeline, GST_STATE_NULL);
     }
     
     if (mainLoop) {
+        LOGI("Stopping GStreamer main loop...");
         g_main_loop_quit(mainLoop);
         if (mainLoopThread.joinable()) {
             mainLoopThread.join();
@@ -248,7 +288,11 @@ void SrtStreamer::Impl::stop() {
         mainLoop = nullptr;
     }
     
-    LOGI("Streaming stopped");
+    // Log final stats
+    LOGI("=== STREAM ENDED ===");
+    LOGI("Total bytes sent: %llu", (unsigned long long)stats.bytesSent);
+    LOGI("Stream duration: %llu ms", (unsigned long long)stats.streamTimeMs);
+    
     if (stateCallback) {
         stateCallback(false, "Streaming stopped");
     }

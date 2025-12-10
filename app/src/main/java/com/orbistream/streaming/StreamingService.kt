@@ -112,6 +112,12 @@ class StreamingService : Service() {
             return
         }
 
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "=== STREAMING SERVICE: START ===")
+        Log.i(TAG, "SRT Target: srt://${config.srtHost}:${config.srtPort}")
+        Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
+        Log.i(TAG, "========================================")
+
         currentConfig = config
         _streamState.value = StreamState.STARTING
 
@@ -123,18 +129,25 @@ class StreamingService : Service() {
             override fun onStateChanged(running: Boolean, message: String) {
                 serviceScope.launch {
                     _streamState.value = if (running) StreamState.STREAMING else StreamState.STOPPED
-                    Log.d(TAG, "State changed: running=$running, message=$message")
+                    Log.i(TAG, "=== Stream State Changed ===")
+                    Log.i(TAG, "Running: $running")
+                    Log.i(TAG, "Message: $message")
                 }
             }
 
             override fun onStatsUpdated(bitrate: Double, bytesSent: Long, packetsLost: Long, rtt: Double, streamTimeMs: Long) {
                 serviceScope.launch {
                     _streamStats.value = StreamStats(bitrate, bytesSent, packetsLost, rtt, streamTimeMs)
+                    // Log stats periodically (every ~5 seconds based on polling)
+                    if (bytesSent > 0) {
+                        Log.d(TAG, "Stats: ${String.format("%.1f", bitrate/1000)}kbps, ${bytesSent/1024}KB sent, RTT=${String.format("%.1f", rtt)}ms")
+                    }
                 }
             }
 
             override fun onError(error: String) {
-                Log.e(TAG, "Streaming error: $error")
+                Log.e(TAG, "!!! STREAMING ERROR !!!")
+                Log.e(TAG, "Error: $error")
                 serviceScope.launch {
                     _streamState.value = StreamState.ERROR
                 }
@@ -142,15 +155,20 @@ class StreamingService : Service() {
         })
 
         // Create and start pipeline
+        Log.i(TAG, "Creating GStreamer pipeline...")
         if (NativeStreamer.createPipeline(config)) {
+            Log.i(TAG, "Pipeline created, starting stream...")
             if (NativeStreamer.start()) {
+                Log.i(TAG, "=== STREAM STARTED SUCCESSFULLY ===")
                 _streamState.value = StreamState.STREAMING
                 startStatsPolling()
             } else {
+                Log.e(TAG, "!!! FAILED TO START STREAM !!!")
                 _streamState.value = StreamState.ERROR
                 stopSelf()
             }
         } else {
+            Log.e(TAG, "!!! FAILED TO CREATE PIPELINE !!!")
             _streamState.value = StreamState.ERROR
             stopSelf()
         }

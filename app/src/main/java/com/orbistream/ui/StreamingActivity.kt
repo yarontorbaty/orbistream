@@ -143,6 +143,15 @@ class StreamingActivity : AppCompatActivity() {
         val settings = OrbiStreamApp.instance.settingsRepository
         val config = settings.buildStreamConfig()
         
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "=== STARTING STREAMING SERVICE ===")
+        Log.i(TAG, "SRT Target: srt://${config.srtHost}:${config.srtPort}")
+        Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
+        Log.i(TAG, "Video: ${config.videoWidth}x${config.videoHeight} @ ${config.frameRate}fps")
+        Log.i(TAG, "Video bitrate: ${config.videoBitrate / 1000} kbps")
+        Log.i(TAG, "Audio: ${config.sampleRate}Hz @ ${config.audioBitrate / 1000} kbps")
+        Log.i(TAG, "========================================")
+        
         val intent = Intent(this, StreamingService::class.java).apply {
             action = StreamingService.ACTION_START
             putExtra(StreamingService.EXTRA_SRT_HOST, config.srtHost)
