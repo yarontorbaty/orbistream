@@ -38,12 +38,58 @@ object Bondix {
      * Execute a configuration command.
      * 
      * In the real implementation, this sends JSON commands to the Bondix engine.
-     * This stub logs the command and returns a success response.
+     * This stub logs the command and returns mock responses for testing.
      */
     @JvmStatic
     fun configure(configJson: String): String {
         Log.d(TAG, "Stub configure: $configJson")
-        return """{"status": "ok", "stub": true}"""
+        
+        // Parse action to return appropriate mock response
+        return try {
+            val json = org.json.JSONObject(configJson)
+            val action = json.optString("action", "")
+            
+            when (action) {
+                "get-status" -> """{
+                    "status": "ok",
+                    "connected": true,
+                    "state": "connected",
+                    "server": "bondix.example.com",
+                    "latency_ms": 45.5,
+                    "packet_loss": 0.1
+                }"""
+                
+                "get-interface-stats" -> """{
+                    "status": "ok",
+                    "interfaces": {
+                        "WIFI": {
+                            "name": "WiFi",
+                            "active": true,
+                            "tx_bytes": ${(System.currentTimeMillis() / 10) % 100000000},
+                            "rx_bytes": ${(System.currentTimeMillis() / 10) % 50000000},
+                            "tx_bitrate": ${2500000 + (Math.random() * 500000).toLong()},
+                            "rx_bitrate": ${1000000 + (Math.random() * 200000).toLong()},
+                            "rtt_ms": 35.0,
+                            "loss": 0.05
+                        },
+                        "CELLULAR": {
+                            "name": "Cellular",
+                            "active": true,
+                            "tx_bytes": ${(System.currentTimeMillis() / 15) % 50000000},
+                            "rx_bytes": ${(System.currentTimeMillis() / 15) % 25000000},
+                            "tx_bitrate": ${1500000 + (Math.random() * 300000).toLong()},
+                            "rx_bitrate": ${800000 + (Math.random() * 100000).toLong()},
+                            "rtt_ms": 55.0,
+                            "loss": 0.2
+                        }
+                    }
+                }"""
+                
+                else -> """{"status": "ok", "stub": true}"""
+            }
+        } catch (e: Exception) {
+            """{"status": "ok", "stub": true}"""
+        }
     }
 
     /**

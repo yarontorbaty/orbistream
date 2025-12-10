@@ -281,6 +281,71 @@ class BondixManager(private val context: Context) {
     fun isReady(): Boolean = isInitialized
 
     /**
+     * Get tunnel status/metrics from Bondix.
+     * 
+     * @return BondixStats with current metrics, or null if unavailable
+     */
+    fun getStats(): BondixStats? {
+        if (!isInitialized) return null
+
+        return try {
+            // Query tunnel status
+            val statusConfig = JSONObject().apply {
+                put("target", "tunnel")
+                put("action", "get-status")
+            }
+            val statusResponse = configure(statusConfig.toString())
+            
+            // Query interface stats
+            val ifaceConfig = JSONObject().apply {
+                put("target", "tunnel")
+                put("action", "get-interface-stats")
+            }
+            val ifaceResponse = configure(ifaceConfig.toString())
+            
+            parseStats(statusResponse, ifaceResponse)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get stats: ${e.message}")
+            null
+        }
+    }
+
+    private fun parseStats(statusJson: String, ifaceJson: String): BondixStats {
+        val stats = BondixStats()
+        
+        try {
+            val status = JSONObject(statusJson)
+            stats.connected = status.optBoolean("connected", false)
+            stats.tunnelState = status.optString("state", "unknown")
+            stats.serverHost = status.optString("server", "")
+            stats.latencyMs = status.optDouble("latency_ms", 0.0)
+            stats.packetLoss = status.optDouble("packet_loss", 0.0)
+            
+            val iface = JSONObject(ifaceJson)
+            val interfaces = iface.optJSONObject("interfaces")
+            interfaces?.keys()?.forEach { key ->
+                val ifaceData = interfaces.getJSONObject(key)
+                val ifaceStats = InterfaceStats(
+                    id = key,
+                    name = ifaceData.optString("name", key),
+                    active = ifaceData.optBoolean("active", false),
+                    txBytes = ifaceData.optLong("tx_bytes", 0),
+                    rxBytes = ifaceData.optLong("rx_bytes", 0),
+                    txBitrate = ifaceData.optDouble("tx_bitrate", 0.0),
+                    rxBitrate = ifaceData.optDouble("rx_bitrate", 0.0),
+                    rtt = ifaceData.optDouble("rtt_ms", 0.0),
+                    loss = ifaceData.optDouble("loss", 0.0)
+                )
+                stats.interfaces[key] = ifaceStats
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error parsing stats: ${e.message}")
+        }
+        
+        return stats
+    }
+
+    /**
      * Perform a complete configuration with all settings.
      * 
      * @param tunnelName Bondix tunnel name
@@ -313,6 +378,88 @@ class BondixManager(private val context: Context) {
             Log.e(TAG, "Configuration failed: ${e.message}")
             statusListener?.onBondixStatusChanged(false, "Configuration failed")
             return false
+        }
+    }
+}
+
+/**
+ * Bondix tunnel and interface statistics.
+ */
+data class BondixStats(
+    var connected: Boolean = false,
+    var tunnelState: String = "unknown",
+    var serverHost: String = "",
+    var latencyMs: Double = 0.0,
+    var packetLoss: Double = 0.0,
+    var interfaces: MutableMap<String, InterfaceStats> = mutableMapOf()
+) {
+    /**
+     * Get total TX bitrate across all interfaces.
+     */
+    fun getTotalTxBitrate(): Double = interfaces.values.sumOf { it.txBitrate }
+    
+    /**
+     * Get total RX bitrate across all interfaces.
+     */
+    fun getTotalRxBitrate(): Double = interfaces.values.sumOf { it.rxBitrate }
+    
+    /**
+     * Get total TX bytes across all interfaces.
+     */
+    fun getTotalTxBytes(): Long = interfaces.values.sumOf { it.txBytes }
+    
+    /**
+     * Get total RX bytes across all interfaces.
+     */
+    fun getTotalRxBytes(): Long = interfaces.values.sumOf { it.rxBytes }
+    
+    /**
+     * Get number of active interfaces.
+     */
+    fun getActiveInterfaceCount(): Int = interfaces.values.count { it.active }
+    
+    /**
+     * Format total bitrate as human-readable string.
+     */
+    fun getFormattedTxBitrate(): String {
+        val bps = getTotalTxBitrate()
+        return when {
+            bps >= 1_000_000 -> String.format("%.1f Mbps", bps / 1_000_000)
+            bps >= 1_000 -> String.format("%.0f Kbps", bps / 1_000)
+            else -> String.format("%.0f bps", bps)
+        }
+    }
+}
+
+/**
+ * Statistics for a single network interface.
+ */
+data class InterfaceStats(
+    val id: String,
+    val name: String,
+    val active: Boolean = false,
+    val txBytes: Long = 0,
+    val rxBytes: Long = 0,
+    val txBitrate: Double = 0.0,  // bits per second
+    val rxBitrate: Double = 0.0,
+    val rtt: Double = 0.0,        // milliseconds
+    val loss: Double = 0.0        // percentage 0-100
+) {
+    fun getFormattedTxBitrate(): String {
+        return when {
+            txBitrate >= 1_000_000 -> String.format("%.1f Mbps", txBitrate / 1_000_000)
+            txBitrate >= 1_000 -> String.format("%.0f Kbps", txBitrate / 1_000)
+            else -> String.format("%.0f bps", txBitrate)
+        }
+    }
+    
+    fun getFormattedBytes(): String {
+        val total = txBytes + rxBytes
+        return when {
+            total >= 1_000_000_000 -> String.format("%.1f GB", total / 1_000_000_000.0)
+            total >= 1_000_000 -> String.format("%.1f MB", total / 1_000_000.0)
+            total >= 1_000 -> String.format("%.0f KB", total / 1_000.0)
+            else -> "$total B"
         }
     }
 }

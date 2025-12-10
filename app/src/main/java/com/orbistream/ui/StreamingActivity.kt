@@ -16,11 +16,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.orbistream.OrbiStreamApp
 import com.orbistream.R
+import com.orbistream.bondix.BondixStats
 import com.orbistream.bondix.NetworkRegistry
 import com.orbistream.databinding.ActivityStreamingBinding
 import com.orbistream.streaming.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
 /**
  * StreamingActivity manages the live streaming session.
@@ -44,6 +45,7 @@ class StreamingActivity : AppCompatActivity() {
     
     private var streamingService: StreamingService? = null
     private var serviceBound = false
+    private var bondixStatsJob: Job? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -55,8 +57,11 @@ class StreamingActivity : AppCompatActivity() {
             // Start observing service state
             observeServiceState()
             
-            // Start camera and audio capture
+                // Start camera and audio capture
             startCapture()
+            
+            // Start Bondix stats polling
+            startBondixStatsPolling()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -119,6 +124,10 @@ class StreamingActivity : AppCompatActivity() {
     private fun updateNetworkPills(wifiAvailable: Boolean, cellularAvailable: Boolean) {
         updatePillIndicator(binding.wifiPillIndicator, wifiAvailable)
         updatePillIndicator(binding.cellularPillIndicator, cellularAvailable)
+        
+        // Update pill text with interface names
+        binding.wifiPillText.text = if (wifiAvailable) "WiFi ●" else "WiFi"
+        binding.cellularPillText.text = if (cellularAvailable) "LTE ●" else "LTE"
     }
 
     private fun updatePillIndicator(indicator: View, connected: Boolean) {
@@ -221,7 +230,51 @@ class StreamingActivity : AppCompatActivity() {
         binding.bitrateDisplay.text = String.format("%.1f Mbps", stats.getBitrateMbps())
     }
 
+    private fun startBondixStatsPolling() {
+        bondixStatsJob?.cancel()
+        bondixStatsJob = lifecycleScope.launch {
+            while (isActive) {
+                val stats = OrbiStreamApp.instance.bondixManager.getStats()
+                stats?.let { updateBondixStats(it) }
+                delay(1000) // Poll every second
+            }
+        }
+    }
+
+    private fun updateBondixStats(stats: BondixStats) {
+        // Show Bondix stats card if connected
+        binding.bondixStatsCard.visibility = if (stats.connected) View.VISIBLE else View.GONE
+        
+        if (stats.connected) {
+            // Total bitrate
+            binding.bondixTotalBitrate.text = "↑ ${stats.getFormattedTxBitrate()}"
+            
+            // Latency and loss
+            binding.bondixLatency.text = String.format(
+                "RTT: %.0fms • Loss: %.1f%%",
+                stats.latencyMs,
+                stats.packetLoss
+            )
+            
+            // Update interface pills with per-interface stats
+            stats.interfaces["WIFI"]?.let { wifi ->
+                if (wifi.active) {
+                    binding.wifiPillText.text = "WiFi ${wifi.getFormattedTxBitrate()}"
+                }
+            }
+            
+            stats.interfaces["CELLULAR"]?.let { cellular ->
+                if (cellular.active) {
+                    binding.cellularPillText.text = "LTE ${cellular.getFormattedTxBitrate()}"
+                }
+            }
+        }
+    }
+
     private fun stopStreaming() {
+        // Stop Bondix stats polling
+        bondixStatsJob?.cancel()
+        
         // Stop capture
         cameraManager.stop()
         audioCapture.stop()
