@@ -51,6 +51,11 @@ private:
     bool videoCapsSet = false;
     int lastVideoWidth = 0;
     int lastVideoHeight = 0;
+    
+    // Timestamp synchronization - use first video timestamp as base
+    int64_t videoBaseTimestamp = -1;
+    int64_t audioBaseTimestamp = -1;
+    int64_t streamBaseTimestamp = -1;  // Common base for both streams
 #endif
 
     StreamConfig currentConfig;
@@ -120,11 +125,14 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
 
     std::stringstream ss;
     
-    // Video source from app - accept any size, we'll scale to target
-    ss << "appsrc name=video_src format=time is-live=true do-timestamp=true "
-       << "caps=\"video/x-raw,format=NV21,framerate=" << config.frameRate << "/1\" ! ";
+    // Video source from app - set initial width/height to configured values
+    // Use format=time and is-live=true for live streaming
+    // Remove do-timestamp=true since we set timestamps manually
+    ss << "appsrc name=video_src format=time is-live=true "
+       << "caps=\"video/x-raw,format=NV21,width=" << config.videoWidth 
+       << ",height=" << config.videoHeight << ",framerate=" << config.frameRate << "/1\" ! ";
     
-    // Video processing: convert, scale to target size, encode
+    // Video processing: convert to I420, scale if needed, encode
     ss << "videoconvert ! "
        << "videoscale ! video/x-raw,width=" << config.videoWidth << ",height=" << config.videoHeight << " ! "
        << "x264enc tune=zerolatency bitrate=" << (config.videoBitrate / 1000) 
@@ -132,7 +140,8 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
        << "h264parse ! queue name=video_queue ! mux. ";
     
     // Audio source from app - must include layout=interleaved for audioconvert
-    ss << "appsrc name=audio_src format=time is-live=true do-timestamp=true "
+    // Remove do-timestamp=true since we set timestamps manually
+    ss << "appsrc name=audio_src format=time is-live=true "
        << "caps=\"audio/x-raw,format=S16LE,layout=interleaved,rate=" << config.sampleRate 
        << ",channels=" << config.audioChannels << "\" ! ";
     
@@ -219,6 +228,14 @@ bool SrtStreamer::Impl::start() {
     
     LOGI("=== STARTING SRT STREAM ===");
     LOGI("Setting pipeline to PLAYING state...");
+    
+    // Reset timestamp synchronization
+    streamBaseTimestamp = -1;
+    videoBaseTimestamp = -1;
+    audioBaseTimestamp = -1;
+    videoCapsSet = false;
+    lastVideoWidth = 0;
+    lastVideoHeight = 0;
     
     GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
     
@@ -373,6 +390,16 @@ void SrtStreamer::Impl::pushVideoFrame(const uint8_t* data, size_t size,
         videoCapsSet = true;
     }
     
+    // Initialize stream base timestamp from first video frame
+    if (streamBaseTimestamp < 0) {
+        streamBaseTimestamp = timestampNs;
+        LOGI("Stream base timestamp set from video: %lld", (long long)streamBaseTimestamp);
+    }
+    
+    // Calculate relative timestamp from stream start
+    int64_t relativePts = timestampNs - streamBaseTimestamp;
+    if (relativePts < 0) relativePts = 0;  // Safety check
+    
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
     if (!buffer) {
         LOGE("Failed to allocate video buffer");
@@ -380,8 +407,8 @@ void SrtStreamer::Impl::pushVideoFrame(const uint8_t* data, size_t size,
     }
     
     gst_buffer_fill(buffer, 0, data, size);
-    // Only set PTS, let muxer calculate DTS to avoid "DTS going backward" errors
-    GST_BUFFER_PTS(buffer) = timestampNs;
+    // Use relative PTS from stream start - this ensures monotonically increasing timestamps
+    GST_BUFFER_PTS(buffer) = relativePts;
     GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
     GST_BUFFER_DURATION(buffer) = GST_SECOND / currentConfig.frameRate;
     
@@ -407,6 +434,16 @@ void SrtStreamer::Impl::pushAudioSamples(const uint8_t* data, size_t size,
 #if GSTREAMER_AVAILABLE
     if (!streaming || !audioAppSrc) return;
     
+    // Wait for video to establish base timestamp, or use audio timestamp
+    if (streamBaseTimestamp < 0) {
+        streamBaseTimestamp = timestampNs;
+        LOGI("Stream base timestamp set from audio: %lld", (long long)streamBaseTimestamp);
+    }
+    
+    // Calculate relative timestamp from stream start
+    int64_t relativePts = timestampNs - streamBaseTimestamp;
+    if (relativePts < 0) relativePts = 0;  // Safety check
+    
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
     if (!buffer) {
         LOGE("Failed to allocate audio buffer");
@@ -414,8 +451,8 @@ void SrtStreamer::Impl::pushAudioSamples(const uint8_t* data, size_t size,
     }
     
     gst_buffer_fill(buffer, 0, data, size);
-    // Only set PTS, let muxer calculate DTS
-    GST_BUFFER_PTS(buffer) = timestampNs;
+    // Use relative PTS from stream start
+    GST_BUFFER_PTS(buffer) = relativePts;
     GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
     
     // Calculate duration based on sample count
