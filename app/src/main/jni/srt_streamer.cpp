@@ -48,6 +48,9 @@ private:
     GstElement* audioAppSrc = nullptr;
     GMainLoop* mainLoop = nullptr;
     std::thread mainLoopThread;
+    bool videoCapsSet = false;
+    int lastVideoWidth = 0;
+    int lastVideoHeight = 0;
 #endif
 
     StreamConfig currentConfig;
@@ -320,6 +323,11 @@ void SrtStreamer::Impl::cleanup() {
         gst_object_unref(pipeline);
         pipeline = nullptr;
     }
+    
+    // Reset dynamic caps state
+    videoCapsSet = false;
+    lastVideoWidth = 0;
+    lastVideoHeight = 0;
 #endif
 }
 
@@ -340,6 +348,25 @@ void SrtStreamer::Impl::pushVideoFrame(const uint8_t* data, size_t size,
                                         int width, int height, int64_t timestampNs) {
 #if GSTREAMER_AVAILABLE
     if (!streaming || !videoAppSrc) return;
+    
+    // Set caps dynamically on first frame or if resolution changes
+    if (!videoCapsSet || width != lastVideoWidth || height != lastVideoHeight) {
+        LOGI("Setting video caps: %dx%d @ %d fps", width, height, currentConfig.frameRate);
+        
+        GstCaps* caps = gst_caps_new_simple("video/x-raw",
+            "format", G_TYPE_STRING, "NV21",
+            "width", G_TYPE_INT, width,
+            "height", G_TYPE_INT, height,
+            "framerate", GST_TYPE_FRACTION, currentConfig.frameRate, 1,
+            nullptr);
+        
+        g_object_set(videoAppSrc, "caps", caps, nullptr);
+        gst_caps_unref(caps);
+        
+        lastVideoWidth = width;
+        lastVideoHeight = height;
+        videoCapsSet = true;
+    }
     
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
     if (!buffer) {
