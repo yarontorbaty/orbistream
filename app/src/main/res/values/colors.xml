@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand Colors - Deep space theme with cyan accents -->
+    <color name="primary">#00E5CC</color>
+    <color name="primary_variant">#00B8A3</color>
+    <color name="primary_dark">#009688</color>
+    <color name="secondary">#FF6B35</color>
+    <color name="secondary_variant">#E85A2A</color>
+    
+    <!-- Background colors -->
+    <color name="background_dark">#0A0E14</color>
+    <color name="background_card">#131A24</color>
+    <color name="background_elevated">#1A2332</color>
+    <color name="surface">#0F1419</color>
+    
+    <!-- Text colors -->
+    <color name="text_primary">#ECEFF4</color>
+    <color name="text_secondary">#8893A7</color>
+    <color name="text_hint">#4C566A</color>
+    
+    <!-- Status colors -->
+    <color name="status_connected">#4AE88C</color>
+    <color name="status_disconnected">#E84A5F</color>
+    <color name="status_connecting">#FFB347</color>
+    <color name="status_streaming">#00E5CC</color>
+    
+    <!-- Overlay -->
+    <color name="overlay_dark">#99000000</color>
+    <color name="overlay_light">#33FFFFFF</color>
+    
+    <!-- Gradient colors -->
+    <color name="gradient_start">#00E5CC</color>
+    <color name="gradient_end">#0066FF</color>
+</resources>
+

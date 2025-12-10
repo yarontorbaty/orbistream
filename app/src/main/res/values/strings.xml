@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OrbiStream</string>
+    
+    <!-- Main Activity -->
+    <string name="title_main">OrbiStream</string>
+    <string name="subtitle_main">Stream anywhere with network bonding</string>
+    <string name="btn_start_stream">Start Streaming</string>
+    <string name="btn_settings">Settings</string>
+    <string name="network_status">Network Status</string>
+    <string name="bondix_status">Bondix: %1$s</string>
+    <string name="wifi_status">WiFi: %1$s</string>
+    <string name="cellular_status">Cellular: %1$s</string>
+    
+    <!-- Streaming Activity -->
+    <string name="btn_stop_stream">Stop</string>
+    <string name="streaming_to">Streaming to: %1$s</string>
+    <string name="stream_time">%1$s</string>
+    <string name="bitrate_display">%1$s Mbps</string>
+    
+    <!-- Settings Activity -->
+    <string name="title_settings">Settings</string>
+    <string name="section_srt">SRT Configuration</string>
+    <string name="label_srt_host">SRT Server Host</string>
+    <string name="label_srt_port">SRT Port</string>
+    <string name="label_stream_id">Stream ID (optional)</string>
+    <string name="label_passphrase">Passphrase (optional)</string>
+    <string name="section_bondix">Bondix Configuration</string>
+    <string name="label_tunnel_name">Tunnel Name</string>
+    <string name="label_tunnel_password">Tunnel Password</string>
+    <string name="label_endpoint_server">Endpoint Server</string>
+    <string name="section_video">Video Settings</string>
+    <string name="label_resolution">Resolution</string>
+    <string name="label_bitrate">Bitrate (kbps)</string>
+    <string name="label_framerate">Frame Rate</string>
+    <string name="section_audio">Audio Settings</string>
+    <string name="label_audio_bitrate">Audio Bitrate (kbps)</string>
+    <string name="label_sample_rate">Sample Rate</string>
+    <string name="btn_save">Save Settings</string>
+    
+    <!-- Notifications -->
+    <string name="notification_channel_name">Streaming</string>
+    <string name="notification_channel_description">Streaming service notifications</string>
+    <string name="notification_streaming_title">OrbiStream Active</string>
+    <string name="notification_streaming_text">Streaming via bonded network</string>
+    
+    <!-- Errors -->
+    <string name="error_bondix_init">Failed to initialize Bondix</string>
+    <string name="error_camera_permission">Camera permission required</string>
+    <string name="error_audio_permission">Audio permission required</string>
+    <string name="error_stream_failed">Stream failed: %1$s</string>
+    <string name="error_network_unavailable">No network available</string>
+</resources>
+

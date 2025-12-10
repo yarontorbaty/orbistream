@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    
+    <!-- Streaming icon - video camera with signal -->
+    <path
+        android:fillColor="@color/primary"
+        android:pathData="M17,10.5V7c0,-0.55 -0.45,-1 -1,-1H4c-0.55,0 -1,0.45 -1,1v10c0,0.55 0.45,1 1,1h12c0.55,0 1,-0.45 1,-1v-3.5l4,4v-11l-4,4z" />
+    
+    <!-- Signal waves -->
+    <path
+        android:fillColor="@color/secondary"
+        android:pathData="M21,3v2c0,0 -2,0.5 -2,3s2,3 2,3v2c-3,0 -4,-2.5 -4,-5s1,-5 4,-5z"
+        android:strokeWidth="0" />
+</vector>
+
