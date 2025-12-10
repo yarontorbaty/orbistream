@@ -1,8 +1,11 @@
 # Built application files
 *.apk
-*.aar
 *.ap_
 *.aab
+
+# AAR files (except libs folder which contains Bondix)
+*.aar
+!app/libs/*.aar
 
 # Files for the ART/Dalvik VM
 *.dex
