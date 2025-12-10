@@ -8,10 +8,12 @@ import com.orbistream.OrbiStreamApp
 import com.orbistream.R
 import com.orbistream.databinding.ActivitySettingsBinding
 import com.orbistream.data.SettingsRepository
+import com.orbistream.streaming.TransportMode
 
 /**
  * SettingsActivity allows users to configure:
- * - SRT streaming destination
+ * - Transport mode (UDP or SRT)
+ * - Streaming destination
  * - Bondix tunnel credentials
  * - Video and audio encoding settings
  */
@@ -33,9 +35,34 @@ class SettingsActivity : AppCompatActivity() {
         
         settings = OrbiStreamApp.instance.settingsRepository
         
+        setupTransportToggle()
         setupDropdowns()
         loadSettings()
         setupClickListeners()
+    }
+    
+    private fun setupTransportToggle() {
+        binding.toggleTransport.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) {
+                updateTransportDescription(checkedId == R.id.btnUdp)
+            }
+        }
+    }
+    
+    private fun updateTransportDescription(isUdp: Boolean) {
+        binding.transportDescription.text = if (isUdp) {
+            "UDP: Use with Bondix (Bondix handles reliability)"
+        } else {
+            "SRT: Direct streaming with built-in reliability"
+        }
+        
+        binding.transportHint.text = if (isUdp) {
+            "Receiver: UDP MPEG-TS listener (e.g., VLC: udp://@:5000)\n" +
+            "Best with Bondix for network bonding"
+        } else {
+            "Receiver: SRT listener (e.g., ffplay srt://0.0.0.0:5000?mode=listener)\n" +
+            "Works without Bondix"
+        }
     }
 
     private fun setupDropdowns() {
@@ -57,7 +84,12 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadSettings() {
-        // SRT settings
+        // Transport mode
+        val isUdp = settings.transportMode == TransportMode.UDP
+        binding.toggleTransport.check(if (isUdp) R.id.btnUdp else R.id.btnSrt)
+        updateTransportDescription(isUdp)
+        
+        // Destination settings
         binding.inputSrtHost.setText(settings.srtHost)
         binding.inputSrtPort.setText(settings.srtPort.toString())
         binding.inputStreamId.setText(settings.streamId)
@@ -89,14 +121,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun saveSettings() {
-        // Validate SRT host
+        // Validate host
         val srtHost = binding.inputSrtHost.text.toString().trim()
         if (srtHost.isBlank()) {
-            binding.inputSrtHost.error = "SRT host is required"
+            binding.inputSrtHost.error = "Host is required"
             return
         }
 
-        // Validate SRT port
+        // Validate port
         val srtPort = binding.inputSrtPort.text.toString().toIntOrNull()
         if (srtPort == null || srtPort !in 1..65535) {
             binding.inputSrtPort.error = "Invalid port (1-65535)"
@@ -110,7 +142,11 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
-        // Save SRT settings
+        // Save transport mode
+        val isUdp = binding.toggleTransport.checkedButtonId == R.id.btnUdp
+        settings.transportMode = if (isUdp) TransportMode.UDP else TransportMode.SRT
+        
+        // Save destination settings
         settings.srtHost = srtHost
         settings.srtPort = srtPort
         settings.streamId = binding.inputStreamId.text.toString().trim()
@@ -132,10 +168,11 @@ class SettingsActivity : AppCompatActivity() {
 
         // Update Bondix configuration if settings changed
         if (settings.hasBondixSettings()) {
-            OrbiStreamApp.instance.configureBondixIfReady()
+            OrbiStreamApp.instance.configureBondixIfReady(force = true)
         }
 
-        Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
+        val modeStr = if (isUdp) "UDP" else "SRT"
+        Toast.makeText(this, "Settings saved ($modeStr mode)", Toast.LENGTH_SHORT).show()
         finish()
     }
 }

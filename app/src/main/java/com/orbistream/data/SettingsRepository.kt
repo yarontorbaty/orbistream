@@ -3,6 +3,7 @@ package com.orbistream.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.orbistream.streaming.StreamConfig
+import com.orbistream.streaming.TransportMode
 
 /**
  * SettingsRepository persists app settings using SharedPreferences.
@@ -12,7 +13,10 @@ class SettingsRepository(context: Context) {
     companion object {
         private const val PREFS_NAME = "orbistream_settings"
         
-        // SRT settings
+        // Transport settings
+        private const val KEY_TRANSPORT_MODE = "transport_mode"  // "udp" or "srt"
+        
+        // SRT/UDP target settings
         private const val KEY_SRT_HOST = "srt_host"
         private const val KEY_SRT_PORT = "srt_port"
         private const val KEY_STREAM_ID = "stream_id"
@@ -33,7 +37,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_SAMPLE_RATE = "sample_rate"
         
         // Defaults
-        private const val DEFAULT_SRT_PORT = 9000
+        private const val DEFAULT_SRT_PORT = 5000
         private const val DEFAULT_VIDEO_BITRATE = 4000 // kbps
         private const val DEFAULT_FRAME_RATE = 30
         private const val DEFAULT_AUDIO_BITRATE = 128 // kbps
@@ -43,7 +47,18 @@ class SettingsRepository(context: Context) {
     private val prefs: SharedPreferences = 
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    // SRT Settings
+    // Transport Mode
+    var transportMode: TransportMode
+        get() {
+            val mode = prefs.getString(KEY_TRANSPORT_MODE, "udp") ?: "udp"
+            return if (mode == "srt") TransportMode.SRT else TransportMode.UDP
+        }
+        set(value) {
+            val mode = if (value == TransportMode.SRT) "srt" else "udp"
+            prefs.edit().putString(KEY_TRANSPORT_MODE, mode).apply()
+        }
+
+    // Target Settings (used for both UDP and SRT)
     var srtHost: String
         get() = prefs.getString(KEY_SRT_HOST, "") ?: ""
         set(value) = prefs.edit().putString(KEY_SRT_HOST, value).apply()
@@ -126,6 +141,7 @@ class SettingsRepository(context: Context) {
     fun buildStreamConfig(): StreamConfig {
         val (width, height) = getResolutionSize()
         return StreamConfig(
+            transport = transportMode,
             srtHost = srtHost,
             srtPort = srtPort,
             streamId = streamId.takeIf { it.isNotBlank() },
