@@ -3,6 +3,10 @@
 #include <memory>
 #include "srt_streamer.h"
 
+#if GSTREAMER_AVAILABLE
+#include <gst/gst.h>
+#endif
+
 #define LOG_TAG "OrbiStreamJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -16,13 +20,72 @@ static jobject g_callbackObject = nullptr;
 static jmethodID g_onStateChanged = nullptr;
 static jmethodID g_onStatsUpdated = nullptr;
 static jmethodID g_onError = nullptr;
+static bool g_gstreamer_initialized = false;
 
 extern "C" {
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
-    LOGI("JNI_OnLoad");
+    LOGI("JNI_OnLoad: liborbistream_native loaded");
     return JNI_VERSION_1_6;
+}
+
+/**
+ * GStreamer JNI nativeInit - called from org.freedesktop.gstreamer.GStreamer.init()
+ * This initializes the GStreamer framework on Android.
+ */
+JNIEXPORT void JNICALL
+Java_org_freedesktop_gstreamer_GStreamer_nativeInit(JNIEnv* env, jclass clazz, jobject context) {
+    LOGI("=== GStreamer nativeInit called ===");
+    
+#if GSTREAMER_AVAILABLE
+    if (g_gstreamer_initialized) {
+        LOGI("GStreamer already initialized");
+        return;
+    }
+    
+    // Get the files directory path from Android context
+    jclass contextClass = env->GetObjectClass(context);
+    jmethodID getFilesDir = env->GetMethodID(contextClass, "getFilesDir", "()Ljava/io/File;");
+    jobject filesDir = env->CallObjectMethod(context, getFilesDir);
+    
+    jclass fileClass = env->FindClass("java/io/File");
+    jmethodID getAbsolutePath = env->GetMethodID(fileClass, "getAbsolutePath", "()Ljava/lang/String;");
+    jstring pathString = (jstring)env->CallObjectMethod(filesDir, getAbsolutePath);
+    
+    const char* filesPath = env->GetStringUTFChars(pathString, nullptr);
+    
+    // Set environment variables for GStreamer
+    std::string fontConfig = std::string(filesPath) + "/fontconfig/fonts.conf";
+    std::string caCerts = std::string(filesPath) + "/ssl/certs/ca-certificates.crt";
+    
+    setenv("FONTCONFIG_FILE", fontConfig.c_str(), 1);
+    setenv("CA_CERTIFICATES", caCerts.c_str(), 1);
+    setenv("HOME", filesPath, 1);
+    
+    LOGI("GStreamer paths: FONTCONFIG_FILE=%s", fontConfig.c_str());
+    LOGI("GStreamer paths: CA_CERTIFICATES=%s", caCerts.c_str());
+    
+    env->ReleaseStringUTFChars(pathString, filesPath);
+    
+    // Initialize GStreamer
+    GError* error = nullptr;
+    if (!gst_init_check(nullptr, nullptr, &error)) {
+        if (error) {
+            LOGE("GStreamer init failed: %s", error->message);
+            g_error_free(error);
+        } else {
+            LOGE("GStreamer init failed: unknown error");
+        }
+        return;
+    }
+    
+    g_gstreamer_initialized = true;
+    LOGI("=== GStreamer initialized successfully ===");
+    LOGI("GStreamer version: %s", gst_version_string());
+#else
+    LOGE("GStreamer not available - built without GSTREAMER_AVAILABLE");
+#endif
 }
 
 JNIEXPORT void JNICALL

@@ -30,28 +30,29 @@ object NativeStreamer {
 
     /**
      * Initialize GStreamer. Must be called from Application.onCreate() with context.
+     * This loads all native libraries and initializes the GStreamer framework.
      */
     fun initGStreamer(context: Context): Boolean {
         if (gstreamerInitialized) return true
         
         return try {
-            // Initialize GStreamer Android integration
+            // GStreamer.init() loads both libgstreamer_android.so and liborbistream_native.so,
+            // then calls our native Java_org_freedesktop_gstreamer_GStreamer_nativeInit()
+            // which initializes GStreamer via gst_init()
             org.freedesktop.gstreamer.GStreamer.init(context)
-            gstreamerInitialized = true
-            Log.i(TAG, "GStreamer initialized successfully")
             
-            // Now load our native library
-            System.loadLibrary("gstreamer_android")
-            System.loadLibrary("orbistream_native")
+            gstreamerInitialized = true
             libraryLoaded = true
-            Log.i(TAG, "Native libraries loaded")
+            Log.i(TAG, "GStreamer initialized successfully")
             
             true
         } catch (e: Exception) {
             Log.e(TAG, "GStreamer initialization failed: ${e.message}")
+            e.printStackTrace()
             false
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "Failed to load native library: ${e.message}")
+            e.printStackTrace()
             false
         }
     }

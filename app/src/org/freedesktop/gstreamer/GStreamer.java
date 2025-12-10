@@ -21,15 +21,22 @@ public class GStreamer {
     private static boolean libraryLoaded = false;
 
     public static void init(Context context) throws Exception {
-        // Load the native library first
+        // Load the native libraries first
         if (!libraryLoaded) {
             try {
+                // Load GStreamer core library first
                 System.loadLibrary("gstreamer_android");
+                android.util.Log.i("GStreamer", "libgstreamer_android.so loaded");
+                
+                // Load our native library which contains the nativeInit JNI implementation
+                System.loadLibrary("orbistream_native");
+                android.util.Log.i("GStreamer", "liborbistream_native.so loaded");
+                
                 libraryLoaded = true;
-                android.util.Log.i("GStreamer", "GStreamer native library loaded successfully");
+                android.util.Log.i("GStreamer", "All GStreamer native libraries loaded successfully");
             } catch (UnsatisfiedLinkError e) {
-                android.util.Log.e("GStreamer", "Failed to load GStreamer library: " + e.getMessage());
-                throw new Exception("Failed to load libgstreamer_android.so: " + e.getMessage());
+                android.util.Log.e("GStreamer", "Failed to load native library: " + e.getMessage());
+                throw new Exception("Failed to load native libraries: " + e.getMessage());
             }
         }
         
