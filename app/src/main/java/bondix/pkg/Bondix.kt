@@ -8,20 +8,21 @@ import android.util.Log
  * 
  * This object provides the Kotlin interface to the native libbondix library
  * which is loaded from the bondix-root-release.aar.
+ * 
+ * Per the Bondix integration docs, the JNI methods are:
+ * - initialize(ctx: Context, binder: SocketBindCallback): Boolean
+ * - configure(configJson: String): String
+ * - shutdown()
  */
 object Bondix {
     private const val TAG = "Bondix"
-    private var isInitialized = false
-    private var nativeLibLoaded = false
-
+    
     init {
         try {
             System.loadLibrary("bondix")
-            nativeLibLoaded = true
             Log.i(TAG, "Bondix native library loaded successfully")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "Failed to load Bondix native library: ${e.message}")
-            nativeLibLoaded = false
         }
     }
 
@@ -37,29 +38,7 @@ object Bondix {
      * @return true on success, false on failure
      */
     @JvmStatic
-    fun initialize(ctx: Context, binder: SocketBindCallback): Boolean {
-        if (!nativeLibLoaded) {
-            Log.e(TAG, "Cannot initialize: native library not loaded")
-            return false
-        }
-        
-        if (isInitialized) {
-            Log.w(TAG, "Bondix already initialized")
-            return true
-        }
-
-        return try {
-            val result = nativeInitialize(ctx, binder)
-            if (result) {
-                isInitialized = true
-                Log.i(TAG, "Bondix initialized successfully")
-            }
-            result
-        } catch (e: Exception) {
-            Log.e(TAG, "Bondix initialization failed: ${e.message}")
-            false
-        }
-    }
+    external fun initialize(ctx: Context, binder: SocketBindCallback): Boolean
 
     /**
      * Execute a configuration command.
@@ -72,19 +51,7 @@ object Bondix {
      * @return JSON response from Bondix
      */
     @JvmStatic
-    fun configure(configJson: String): String {
-        if (!isInitialized) {
-            Log.w(TAG, "Bondix not initialized, returning error")
-            return """{"error": "not initialized"}"""
-        }
-
-        return try {
-            nativeConfigure(configJson)
-        } catch (e: Exception) {
-            Log.e(TAG, "Configure failed: ${e.message}")
-            """{"error": "${e.message}"}"""
-        }
-    }
+    external fun configure(configJson: String): String
 
     /**
      * Shutdown the Bondix engine.
@@ -93,28 +60,5 @@ object Bondix {
      * Signals the Bondix thread to terminate and waits for completion.
      */
     @JvmStatic
-    fun shutdown() {
-        if (!isInitialized) {
-            return
-        }
-
-        try {
-            nativeShutdown()
-            isInitialized = false
-            Log.i(TAG, "Bondix shutdown complete")
-        } catch (e: Exception) {
-            Log.e(TAG, "Shutdown failed: ${e.message}")
-        }
-    }
-
-    /**
-     * Check if Bondix is ready.
-     */
-    fun isReady(): Boolean = isInitialized && nativeLibLoaded
-
-    // Native method declarations - implemented in libbondix.so
-    private external fun nativeInitialize(ctx: Context, binder: SocketBindCallback): Boolean
-    private external fun nativeConfigure(configJson: String): String
-    private external fun nativeShutdown()
+    external fun shutdown()
 }
-

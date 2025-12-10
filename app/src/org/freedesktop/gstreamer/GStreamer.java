@@ -17,8 +17,22 @@ import android.system.Os;
 
 public class GStreamer {
     private static native void nativeInit(Context context) throws Exception;
+    
+    private static boolean libraryLoaded = false;
 
     public static void init(Context context) throws Exception {
+        // Load the native library first
+        if (!libraryLoaded) {
+            try {
+                System.loadLibrary("gstreamer_android");
+                libraryLoaded = true;
+                android.util.Log.i("GStreamer", "GStreamer native library loaded successfully");
+            } catch (UnsatisfiedLinkError e) {
+                android.util.Log.e("GStreamer", "Failed to load GStreamer library: " + e.getMessage());
+                throw new Exception("Failed to load libgstreamer_android.so: " + e.getMessage());
+            }
+        }
+        
         copyFonts(context);
         copyCaCertificates(context);
         nativeInit(context);
