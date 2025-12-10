@@ -112,21 +112,20 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
 
     std::stringstream ss;
     
-    // Video source from app
-    ss << "appsrc name=video_src format=time is-live=true "
-       << "caps=\"video/x-raw,format=NV21,width=" << config.videoWidth 
-       << ",height=" << config.videoHeight 
-       << ",framerate=" << config.frameRate << "/1\" ! ";
+    // Video source from app - accept any size, we'll scale to target
+    ss << "appsrc name=video_src format=time is-live=true do-timestamp=true "
+       << "caps=\"video/x-raw,format=NV21,framerate=" << config.frameRate << "/1\" ! ";
     
-    // Video encoding
+    // Video processing: convert, scale to target size, encode
     ss << "videoconvert ! "
+       << "videoscale ! video/x-raw,width=" << config.videoWidth << ",height=" << config.videoHeight << " ! "
        << "x264enc tune=zerolatency bitrate=" << (config.videoBitrate / 1000) 
        << " speed-preset=superfast key-int-max=" << (config.frameRate * 2) << " ! "
        << "h264parse ! queue name=video_queue ! mux. ";
     
-    // Audio source from app
-    ss << "appsrc name=audio_src format=time is-live=true "
-       << "caps=\"audio/x-raw,format=S16LE,rate=" << config.sampleRate 
+    // Audio source from app - must include layout=interleaved for audioconvert
+    ss << "appsrc name=audio_src format=time is-live=true do-timestamp=true "
+       << "caps=\"audio/x-raw,format=S16LE,layout=interleaved,rate=" << config.sampleRate 
        << ",channels=" << config.audioChannels << "\" ! ";
     
     // Audio encoding
