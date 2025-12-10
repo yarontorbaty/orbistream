@@ -380,8 +380,9 @@ void SrtStreamer::Impl::pushVideoFrame(const uint8_t* data, size_t size,
     }
     
     gst_buffer_fill(buffer, 0, data, size);
+    // Only set PTS, let muxer calculate DTS to avoid "DTS going backward" errors
     GST_BUFFER_PTS(buffer) = timestampNs;
-    GST_BUFFER_DTS(buffer) = timestampNs;
+    GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
     GST_BUFFER_DURATION(buffer) = GST_SECOND / currentConfig.frameRate;
     
     GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(videoAppSrc), buffer);
@@ -413,8 +414,9 @@ void SrtStreamer::Impl::pushAudioSamples(const uint8_t* data, size_t size,
     }
     
     gst_buffer_fill(buffer, 0, data, size);
+    // Only set PTS, let muxer calculate DTS
     GST_BUFFER_PTS(buffer) = timestampNs;
-    GST_BUFFER_DTS(buffer) = timestampNs;
+    GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
     
     // Calculate duration based on sample count
     int bytesPerSample = 2 * channels;  // S16LE
