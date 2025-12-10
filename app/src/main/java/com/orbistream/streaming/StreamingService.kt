@@ -12,7 +12,10 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.orbistream.OrbiStreamApp
 import com.orbistream.R
+import com.orbistream.bondix.BondixManager
+import com.orbistream.bondix.Socks5UdpRelay
 import com.orbistream.ui.StreamingActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +59,7 @@ class StreamingService : Service() {
     
     private var statsJob: Job? = null
     private var currentConfig: StreamConfig? = null
+    private var udpRelay: Socks5UdpRelay? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): StreamingService = this@StreamingService
@@ -118,18 +122,66 @@ class StreamingService : Service() {
         Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
         Log.i(TAG, "========================================")
         
-        // Ensure Bondix is configured before streaming
-        val app = application as? com.orbistream.OrbiStreamApp
-        app?.let {
-            if (it.isBondixReady()) {
-                Log.i(TAG, "Bondix tunnel is ready")
-                // Reconfigure to ensure tunnel is connected
-                it.configureBondixIfReady()
-            } else {
-                Log.w(TAG, "Bondix not available - streaming without bonding")
+        // Check if Bondix is available and configured
+        val app = application as? OrbiStreamApp
+        val useBondixRelay = app?.isBondixReady() == true && 
+                             app.settingsRepository.hasBondixSettings()
+        
+        if (useBondixRelay) {
+            Log.i(TAG, "Bondix available - setting up UDP relay for bonded streaming")
+            app?.configureBondixIfReady()
+            
+            // Start UDP relay asynchronously, then continue with streaming
+            serviceScope.launch {
+                val actualConfig = setupBondixRelay(config)
+                continueStartStreaming(actualConfig)
+            }
+        } else {
+            Log.w(TAG, "Bondix not available - streaming directly without bonding")
+            continueStartStreaming(config)
+        }
+    }
+    
+    private suspend fun setupBondixRelay(config: StreamConfig): StreamConfig {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Create UDP relay to forward SRT through Bondix SOCKS5
+                val relay = Socks5UdpRelay(
+                    socksHost = BondixManager.DEFAULT_PROXY_HOST,
+                    socksPort = BondixManager.DEFAULT_PROXY_PORT,
+                    targetHost = config.srtHost,
+                    targetPort = config.srtPort,
+                    localPort = 0 // Auto-assign
+                )
+                
+                if (relay.start()) {
+                    udpRelay = relay
+                    val localPort = relay.getLocalPort()
+                    
+                    Log.i(TAG, "========================================")
+                    Log.i(TAG, "=== BONDIX UDP RELAY ACTIVE ===")
+                    Log.i(TAG, "Local: 127.0.0.1:$localPort")
+                    Log.i(TAG, "Target: ${config.srtHost}:${config.srtPort}")
+                    Log.i(TAG, "Via: Bondix SOCKS5 tunnel")
+                    Log.i(TAG, "========================================")
+                    
+                    // Return modified config pointing to local relay
+                    config.copy(
+                        srtHost = "127.0.0.1",
+                        srtPort = localPort
+                    )
+                } else {
+                    Log.e(TAG, "Failed to start Bondix UDP relay - streaming directly")
+                    config
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting up Bondix relay: ${e.message}")
+                config
             }
         }
-
+    }
+    
+    private fun continueStartStreaming(config: StreamConfig) {
         currentConfig = config
         _streamState.value = StreamState.STARTING
 
@@ -189,6 +241,14 @@ class StreamingService : Service() {
     private fun stopStreaming() {
         statsJob?.cancel()
         NativeStreamer.stop()
+        
+        // Stop UDP relay if running
+        udpRelay?.let {
+            Log.i(TAG, "Stopping Bondix UDP relay")
+            it.stop()
+            udpRelay = null
+        }
+        
         _streamState.value = StreamState.STOPPED
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
