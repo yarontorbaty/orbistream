@@ -88,3 +88,10 @@ gstreamer-android/
 # Keep the JNI source but not old CMake config
 app/src/main/cpp/
 
+# NDK build intermediates (keep libs/ for prebuilt .so files)
+app/src/main/jni/obj/
+app/src/main/jni/gst-android-build/
+app/gst-android-build/
+*.o
+*.o.d
+

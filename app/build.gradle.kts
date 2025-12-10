@@ -7,6 +7,8 @@ android {
     namespace = "com.orbistream"
     compileSdk = 34
 
+    ndkVersion = "26.1.10909125"
+
     defaultConfig {
         applicationId = "com.orbistream"
         minSdk = 26
@@ -20,14 +22,15 @@ android {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
 
-        externalNativeBuild {
-            ndkBuild {
-                arguments += listOf(
-                    "NDK_APPLICATION_MK=src/main/jni/Application.mk",
-                    "APP_STL=c++_shared"
-                )
-            }
-        }
+        // Using prebuilt native libs - ndk-build disabled
+        // externalNativeBuild {
+        //     ndkBuild {
+        //         arguments += listOf(
+        //             "NDK_APPLICATION_MK=src/main/jni/Application.mk",
+        //             "APP_STL=c++_shared"
+        //         )
+        //     }
+        // }
     }
 
     buildTypes {
@@ -54,16 +57,19 @@ android {
         buildConfig = true
     }
 
-    externalNativeBuild {
-        ndkBuild {
-            path = file("src/main/jni/Android.mk")
-        }
-    }
+    // Disabled - using prebuilt native libs from manual ndk-build
+    // To rebuild: cd app/src/main/jni && $NDK_ROOT/ndk-build
+    // externalNativeBuild {
+    //     ndkBuild {
+    //         path = file("src/main/jni/Android.mk")
+    //     }
+    // }
 
-    // Copy GStreamer Java integration
+    // Use prebuilt JNI libs from manual ndk-build
     sourceSets {
         getByName("main") {
             java.srcDirs("src/main/java", "gstreamer-java")
+            jniLibs.srcDirs("src/main/jni/libs")
         }
     }
 }
