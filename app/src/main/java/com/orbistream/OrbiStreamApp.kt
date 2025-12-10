@@ -58,7 +58,14 @@ class OrbiStreamApp : Application() {
     private fun initializeGStreamer() {
         Log.d(TAG, "Initializing GStreamer")
         if (NativeStreamer.initGStreamer(this)) {
-            Log.i(TAG, "GStreamer initialized successfully")
+            Log.i(TAG, "GStreamer libraries loaded successfully")
+            
+            // Now initialize the native streaming engine
+            if (NativeStreamer.initialize()) {
+                Log.i(TAG, "NativeStreamer engine initialized successfully")
+            } else {
+                Log.e(TAG, "NativeStreamer engine initialization failed")
+            }
         } else {
             Log.e(TAG, "GStreamer initialization failed")
         }
