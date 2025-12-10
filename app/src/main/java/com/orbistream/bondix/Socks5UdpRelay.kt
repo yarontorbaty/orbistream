@@ -40,8 +40,9 @@ class Socks5UdpRelay(
         private const val ATYP_IPV6: Byte = 0x04
         
         // Retry settings for waiting for Bondix tunnel to connect
-        private const val MAX_RETRIES = 10
-        private const val RETRY_DELAY_MS = 500L
+        // Total wait time: 20 retries * 1000ms = 20 seconds max
+        private const val MAX_RETRIES = 20
+        private const val RETRY_DELAY_MS = 1000L
     }
 
     private var controlSocket: Socket? = null

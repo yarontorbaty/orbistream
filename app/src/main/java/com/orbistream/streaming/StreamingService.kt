@@ -145,10 +145,11 @@ class StreamingService : Service() {
     private suspend fun setupBondixRelay(config: StreamConfig): StreamConfig {
         return withContext(Dispatchers.IO) {
             try {
-                // Wait a bit for Bondix tunnel to establish
-                // The SOCKS5 proxy may not be ready immediately after configuration
-                Log.i(TAG, "Waiting for Bondix tunnel to establish...")
-                delay(1000)
+                // Wait for Bondix tunnel to establish
+                // The SOCKS5 proxy only starts after the tunnel connects to the server
+                // This may take several seconds depending on network conditions
+                Log.i(TAG, "Waiting for Bondix tunnel to establish (3 seconds)...")
+                delay(3000)
                 
                 // Create UDP relay to forward SRT through Bondix SOCKS5
                 val relay = Socks5UdpRelay(

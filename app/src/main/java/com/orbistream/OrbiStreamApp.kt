@@ -35,6 +35,7 @@ class OrbiStreamApp : Application() {
         private set
     
     private var bondixInitialized = false
+    private var bondixConfigured = false
 
     override fun onCreate() {
         super.onCreate()
@@ -124,8 +125,10 @@ class OrbiStreamApp : Application() {
     /**
      * Configure Bondix with saved settings.
      * Call this when settings are updated.
+     * 
+     * @param force Force reconfiguration even if already configured
      */
-    fun configureBondixIfReady() {
+    fun configureBondixIfReady(force: Boolean = false) {
         if (!bondixInitialized) {
             Log.w(TAG, "Cannot configure Bondix - not initialized")
             return
@@ -133,6 +136,12 @@ class OrbiStreamApp : Application() {
 
         if (!settingsRepository.hasBondixSettings()) {
             Log.d(TAG, "Bondix settings not configured yet")
+            return
+        }
+
+        // Skip if already configured (unless forced)
+        if (bondixConfigured && !force) {
+            Log.d(TAG, "Bondix already configured - skipping (use force=true to reconfigure)")
             return
         }
 
@@ -149,11 +158,17 @@ class OrbiStreamApp : Application() {
         )
         
         if (success) {
+            bondixConfigured = true
             Log.i(TAG, "Bondix tunnel configured successfully")
         } else {
             Log.e(TAG, "Bondix tunnel configuration failed")
         }
     }
+    
+    /**
+     * Check if Bondix has been configured.
+     */
+    fun isBondixConfigured(): Boolean = bondixConfigured
 
     /**
      * Check if Bondix is ready for streaming.
