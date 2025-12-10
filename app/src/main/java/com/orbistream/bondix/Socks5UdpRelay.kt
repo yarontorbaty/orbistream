@@ -38,6 +38,10 @@ class Socks5UdpRelay(
         private const val ATYP_IPV4: Byte = 0x01
         private const val ATYP_DOMAIN: Byte = 0x03
         private const val ATYP_IPV6: Byte = 0x04
+        
+        // Retry settings for waiting for Bondix tunnel to connect
+        private const val MAX_RETRIES = 10
+        private const val RETRY_DELAY_MS = 500L
     }
 
     private var controlSocket: Socket? = null
@@ -59,15 +63,34 @@ class Socks5UdpRelay(
     /**
      * Start the UDP relay.
      * 
+     * Will retry connecting to the SOCKS5 proxy multiple times to allow
+     * the Bondix tunnel to establish its connection first.
+     * 
      * @return true if relay started successfully
      */
     suspend fun start(): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.i(TAG, "Starting SOCKS5 UDP relay to $targetHost:$targetPort via $socksHost:$socksPort")
             
-            // Step 1: Establish SOCKS5 control connection
-            if (!establishSocksConnection()) {
-                Log.e(TAG, "Failed to establish SOCKS5 connection")
+            // Step 1: Establish SOCKS5 control connection (with retries)
+            var connected = false
+            for (attempt in 1..MAX_RETRIES) {
+                Log.d(TAG, "SOCKS5 connection attempt $attempt/$MAX_RETRIES")
+                
+                if (establishSocksConnection()) {
+                    connected = true
+                    Log.i(TAG, "SOCKS5 connection established on attempt $attempt")
+                    break
+                }
+                
+                if (attempt < MAX_RETRIES) {
+                    Log.d(TAG, "Waiting ${RETRY_DELAY_MS}ms before retry...")
+                    delay(RETRY_DELAY_MS)
+                }
+            }
+            
+            if (!connected) {
+                Log.e(TAG, "Failed to establish SOCKS5 connection after $MAX_RETRIES attempts")
                 return@withContext false
             }
             
@@ -120,6 +143,10 @@ class Socks5UdpRelay(
     }
 
     private fun establishSocksConnection(): Boolean {
+        // Close any previous failed connection
+        try { controlSocket?.close() } catch (_: Exception) {}
+        controlSocket = null
+        
         try {
             controlSocket = Socket(socksHost, socksPort)
             controlSocket!!.soTimeout = 10000
@@ -137,13 +164,23 @@ class Socks5UdpRelay(
             
             if (version != SOCKS_VERSION || method != AUTH_NONE) {
                 Log.e(TAG, "SOCKS5 auth failed: version=$version, method=$method")
+                try { controlSocket?.close() } catch (_: Exception) {}
+                controlSocket = null
                 return false
             }
             
             Log.d(TAG, "SOCKS5 connection established")
             return true
+        } catch (e: java.net.ConnectException) {
+            // Connection refused - proxy not ready yet (expected during retries)
+            Log.d(TAG, "SOCKS5 proxy not ready: ${e.message}")
+            try { controlSocket?.close() } catch (_: Exception) {}
+            controlSocket = null
+            return false
         } catch (e: Exception) {
             Log.e(TAG, "SOCKS5 connection error: ${e.message}")
+            try { controlSocket?.close() } catch (_: Exception) {}
+            controlSocket = null
             return false
         }
     }
