@@ -101,17 +101,22 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
     }
     LOGI("=============================");
 
-    // Configure SRT sink with proxy if enabled
-    std::string srtSinkProps = "uri=\"" + srtUri + "\" latency=500";
+    // Configure SRT sink
+    // mode=caller means we connect to an SRT listener (server)
+    // wait-for-connection=false allows async connection
+    std::string srtSinkProps = "uri=\"" + srtUri + "\" mode=caller latency=500 wait-for-connection=false";
     
-    // Note: GStreamer's srtsink might not directly support SOCKS5.
-    // For Bondix integration, we rely on the JVM-level proxy settings
-    // which affect Java-based network connections. For native SRT,
-    // Bondix binds the sockets directly via the SocketBindCallback.
+    // Add stream ID if configured (required by some SRT servers)
+    if (!config.streamId.empty()) {
+        srtSinkProps += " streamid=\"" + config.streamId + "\"";
+    }
     
+    // Add passphrase for encrypted streams
     if (!config.passphrase.empty()) {
         srtSinkProps += " passphrase=\"" + config.passphrase + "\"";
     }
+    
+    LOGI("SRT sink properties: %s", srtSinkProps.c_str());
 
     std::stringstream ss;
     
