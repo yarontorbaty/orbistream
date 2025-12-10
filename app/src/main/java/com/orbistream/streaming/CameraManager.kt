@@ -5,6 +5,7 @@ import android.graphics.ImageFormat
 import android.media.Image
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -39,6 +40,7 @@ class CameraManager(private val context: Context) {
     private var frameCallback: ((ByteArray, Int, Int, Long) -> Unit)? = null
     private var targetResolution: Size = RESOLUTION_1080P
     private var useFrontCamera = false
+    private var targetRotation: Int = Surface.ROTATION_0
 
     /**
      * Set the callback for frame data.
@@ -61,6 +63,13 @@ class CameraManager(private val context: Context) {
      */
     fun setUseFrontCamera(useFront: Boolean) {
         useFrontCamera = useFront
+    }
+
+    /**
+     * Set target rotation (Surface.ROTATION_0, ROTATION_90, etc.)
+     */
+    fun setTargetRotation(rotation: Int) {
+        targetRotation = rotation
     }
 
     /**
@@ -92,17 +101,19 @@ class CameraManager(private val context: Context) {
             )
             .build()
         
-        // Preview use case
+        // Preview use case - configured for landscape
         preview = Preview.Builder()
             .setTargetResolution(targetResolution)
+            .setTargetRotation(targetRotation)
             .build()
             .also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
         
-        // Image analysis for frame capture
+        // Image analysis for frame capture - configured for landscape
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(targetResolution)
+            .setTargetRotation(targetRotation)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
             .build()

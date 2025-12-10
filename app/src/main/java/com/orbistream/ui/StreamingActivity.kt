@@ -8,11 +8,16 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
+import android.view.Surface
 import android.view.View
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.orbistream.OrbiStreamApp
 import com.orbistream.R
@@ -77,8 +82,14 @@ class StreamingActivity : AppCompatActivity() {
         // Keep screen on while streaming
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
+        // Enable edge-to-edge and immersive fullscreen
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        
         binding = ActivityStreamingBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        
+        // Hide system bars for immersive experience
+        hideSystemBars()
         
         // Initialize camera and audio
         cameraManager = CameraManager(this)
@@ -89,6 +100,23 @@ class StreamingActivity : AppCompatActivity() {
         
         // Start streaming service
         startStreamingService()
+    }
+    
+    private fun hideSystemBars() {
+        val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
+        windowInsetsController.apply {
+            // Hide both system bars
+            hide(WindowInsetsCompat.Type.systemBars())
+            // Allow swipe to temporarily reveal
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+    
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            hideSystemBars()
+        }
     }
 
     private fun setupUI() {
@@ -205,8 +233,9 @@ class StreamingActivity : AppCompatActivity() {
         val settings = OrbiStreamApp.instance.settingsRepository
         val (width, height) = settings.getResolutionSize()
         
-        // Configure camera
+        // Configure camera for landscape orientation
         cameraManager.setTargetResolution(android.util.Size(width, height))
+        cameraManager.setTargetRotation(windowManager.defaultDisplay.rotation)
         cameraManager.setFrameCallback { data, w, h, timestamp ->
             streamingService?.pushVideoFrame(data, w, h, timestamp)
         }
@@ -219,7 +248,7 @@ class StreamingActivity : AppCompatActivity() {
         }
         audioCapture.start()
         
-        Log.i(TAG, "Capture started: ${width}x${height}")
+        Log.i(TAG, "Capture started: ${width}x${height} @ rotation ${windowManager.defaultDisplay.rotation}")
     }
 
     private fun updateLiveIndicator(isLive: Boolean) {
