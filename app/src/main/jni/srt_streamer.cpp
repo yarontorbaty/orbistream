@@ -77,46 +77,27 @@ bool SrtStreamer::initGStreamer() {
 }
 
 std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
-    // Build the GStreamer pipeline string for SRT streaming
+    // Build the GStreamer pipeline string for streaming
     // 
     // The pipeline uses appsrc for both video and audio so we can push
     // frames from the Android camera and microphone.
     //
     // Video path: appsrc -> videoconvert -> x264enc -> h264parse
     // Audio path: appsrc -> audioconvert -> voaacenc -> aacparse
-    // Both paths mux into mpegtsmux -> srtsink
+    // Both paths mux into mpegtsmux -> (srtsink or udpsink)
 
-    std::string srtUri = "srt://" + config.srtHost + ":" + std::to_string(config.srtPort);
-    if (!config.streamId.empty()) {
-        srtUri += "?streamid=" + config.streamId;
-    }
-
-    LOGI("=== SRT CONNECTION CONFIG ===");
-    LOGI("SRT URI: %s", srtUri.c_str());
+    const char* transportStr = (config.transport == TransportMode::UDP) ? "UDP" : "SRT";
+    
+    LOGI("=== STREAMING CONFIG ===");
+    LOGI("Transport: %s", transportStr);
+    LOGI("Target: %s:%d", config.srtHost.c_str(), config.srtPort);
     LOGI("Video: %dx%d @ %d fps, bitrate %d bps", 
          config.videoWidth, config.videoHeight, config.frameRate, config.videoBitrate);
     LOGI("Audio: %d Hz, bitrate %d bps", config.sampleRate, config.audioBitrate);
-    if (config.useProxy) {
-        LOGI("Proxy: %s:%d (Bondix)", config.proxyHost.c_str(), config.proxyPort);
+    if (config.useProxy && config.transport == TransportMode::UDP) {
+        LOGI("Bondix: Enabled - reliability handled by tunnel");
     }
-    LOGI("=============================");
-
-    // Configure SRT sink
-    // mode=caller means we connect to an SRT listener (server)
-    // wait-for-connection=false allows async connection
-    std::string srtSinkProps = "uri=\"" + srtUri + "\" mode=caller latency=500 wait-for-connection=false";
-    
-    // Add stream ID if configured (required by some SRT servers)
-    if (!config.streamId.empty()) {
-        srtSinkProps += " streamid=\"" + config.streamId + "\"";
-    }
-    
-    // Add passphrase for encrypted streams
-    if (!config.passphrase.empty()) {
-        srtSinkProps += " passphrase=\"" + config.passphrase + "\"";
-    }
-    
-    LOGI("SRT sink properties: %s", srtSinkProps.c_str());
+    LOGI("========================");
 
     std::stringstream ss;
     
@@ -145,9 +126,36 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
        << "voaacenc bitrate=" << config.audioBitrate << " ! "
        << "aacparse ! queue name=audio_queue ! mux. ";
     
-    // Muxer and SRT output
-    ss << "mpegtsmux name=mux ! "
-       << "srtsink name=srt_sink " << srtSinkProps;
+    // Muxer
+    ss << "mpegtsmux name=mux ! ";
+    
+    // Output sink based on transport mode
+    if (config.transport == TransportMode::UDP) {
+        // UDP output - relies on Bondix for reliability
+        // When used with SOCKS5 UDP relay, this goes through the bonded tunnel
+        ss << "udpsink name=udp_sink host=" << config.srtHost 
+           << " port=" << config.srtPort
+           << " sync=false async=false";
+        LOGI("UDP sink: host=%s port=%d", config.srtHost.c_str(), config.srtPort);
+    } else {
+        // SRT output - has its own reliability (use when not using Bondix)
+        std::string srtUri = "srt://" + config.srtHost + ":" + std::to_string(config.srtPort);
+        if (!config.streamId.empty()) {
+            srtUri += "?streamid=" + config.streamId;
+        }
+        
+        std::string srtSinkProps = "uri=\"" + srtUri + "\" mode=caller latency=500 wait-for-connection=false";
+        
+        if (!config.streamId.empty()) {
+            srtSinkProps += " streamid=\"" + config.streamId + "\"";
+        }
+        if (!config.passphrase.empty()) {
+            srtSinkProps += " passphrase=\"" + config.passphrase + "\"";
+        }
+        
+        ss << "srtsink name=srt_sink " << srtSinkProps;
+        LOGI("SRT sink: %s", srtSinkProps.c_str());
+    }
     
     return ss.str();
 }

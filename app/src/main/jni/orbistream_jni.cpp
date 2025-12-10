@@ -169,7 +169,8 @@ Java_com_orbistream_streaming_NativeStreamer_nativeCreatePipeline(
         jstring srtHost, jint srtPort, jstring streamId, jstring passphrase,
         jint videoWidth, jint videoHeight, jint videoBitrate, jint frameRate,
         jint audioBitrate, jint sampleRate,
-        jstring proxyHost, jint proxyPort, jboolean useProxy) {
+        jstring proxyHost, jint proxyPort, jboolean useProxy,
+        jint transportMode) {
     
     if (!g_streamer) {
         LOGE("Streamer not initialized");
@@ -177,6 +178,9 @@ Java_com_orbistream_streaming_NativeStreamer_nativeCreatePipeline(
     }
     
     StreamConfig config;
+    
+    // Parse transport mode: 0 = UDP, 1 = SRT
+    config.transport = (transportMode == 0) ? TransportMode::UDP : TransportMode::SRT;
     
     // Parse strings
     const char* host = env->GetStringUTFChars(srtHost, nullptr);
@@ -212,8 +216,9 @@ Java_com_orbistream_streaming_NativeStreamer_nativeCreatePipeline(
     config.proxyPort = proxyPort;
     config.useProxy = useProxy;
     
-    LOGI("Creating pipeline: %s:%d, video %dx%d@%d, bitrate %d",
-         config.srtHost.c_str(), config.srtPort,
+    const char* transportStr = (config.transport == TransportMode::UDP) ? "UDP" : "SRT";
+    LOGI("Creating pipeline [%s]: %s:%d, video %dx%d@%d, bitrate %d",
+         transportStr, config.srtHost.c_str(), config.srtPort,
          config.videoWidth, config.videoHeight, config.frameRate, config.videoBitrate);
     
     return g_streamer->createPipeline(config) ? JNI_TRUE : JNI_FALSE;

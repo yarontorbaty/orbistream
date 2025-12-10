@@ -7,14 +7,28 @@
 namespace orbistream {
 
 /**
- * Configuration for the SRT streaming pipeline.
+ * Transport mode for streaming.
+ * 
+ * - SRT: Uses SRT protocol with built-in retransmission (use when NOT using Bondix)
+ * - UDP: Uses plain UDP MPEG-TS (use with Bondix - Bondix provides reliability)
+ */
+enum class TransportMode {
+    SRT,    // SRT protocol - has its own retransmission
+    UDP     // Plain UDP - relies on Bondix for reliability
+};
+
+/**
+ * Configuration for the streaming pipeline.
  */
 struct StreamConfig {
-    // SRT target
-    std::string srtHost;
-    int srtPort = 9000;
+    // Transport mode
+    TransportMode transport = TransportMode::UDP;  // Default to UDP for Bondix
+    
+    // Target host/port (works for both SRT and UDP)
+    std::string srtHost;  // TODO: rename to targetHost
+    int srtPort = 9000;   // TODO: rename to targetPort
     std::string streamId;
-    std::string passphrase;
+    std::string passphrase;  // Only used for SRT
     
     // Video settings
     int videoWidth = 1920;

@@ -100,12 +100,17 @@ object NativeStreamer {
             return false
         }
 
-        Log.i(TAG, "=== Creating SRT Pipeline ===")
-        Log.i(TAG, "Target: srt://${config.srtHost}:${config.srtPort}")
+        val transportName = if (config.transport == TransportMode.UDP) "UDP" else "SRT"
+        val protocol = if (config.transport == TransportMode.UDP) "udp" else "srt"
+        
+        Log.i(TAG, "=== Creating $transportName Pipeline ===")
+        Log.i(TAG, "Target: $protocol://${config.srtHost}:${config.srtPort}")
         Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
         Log.i(TAG, "Video: ${config.videoWidth}x${config.videoHeight} @ ${config.frameRate}fps, ${config.videoBitrate/1000}kbps")
         Log.i(TAG, "Audio: ${config.sampleRate}Hz, ${config.audioBitrate/1000}kbps")
-        Log.i(TAG, "Proxy: ${if (config.useProxy) "${config.proxyHost}:${config.proxyPort}" else "disabled"}")
+        if (config.transport == TransportMode.UDP && config.useProxy) {
+            Log.i(TAG, "Bondix: Enabled - reliability via bonded tunnel")
+        }
 
         return nativeCreatePipeline(
             config.srtHost,
@@ -120,7 +125,8 @@ object NativeStreamer {
             config.sampleRate,
             config.proxyHost,
             config.proxyPort,
-            config.useProxy
+            config.useProxy,
+            config.transport.value
         )
     }
 
@@ -239,7 +245,8 @@ object NativeStreamer {
         sampleRate: Int,
         proxyHost: String?,
         proxyPort: Int,
-        useProxy: Boolean
+        useProxy: Boolean,
+        transportMode: Int  // 0 = UDP, 1 = SRT
     ): Boolean
     private external fun nativeStart(): Boolean
     private external fun nativeStop()
@@ -251,9 +258,21 @@ object NativeStreamer {
 }
 
 /**
+ * Transport mode for streaming.
+ * 
+ * - UDP: Plain UDP MPEG-TS (use with Bondix - Bondix provides reliability)
+ * - SRT: SRT protocol with built-in retransmission (use when NOT using Bondix)
+ */
+enum class TransportMode(val value: Int) {
+    UDP(0),  // Plain UDP - relies on Bondix for reliability
+    SRT(1)   // SRT protocol - has its own retransmission
+}
+
+/**
  * Streaming configuration.
  */
 data class StreamConfig(
+    val transport: TransportMode = TransportMode.UDP,  // Default to UDP for Bondix
     val srtHost: String,
     val srtPort: Int = 9000,
     val streamId: String? = null,

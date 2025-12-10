@@ -116,29 +116,36 @@ class StreamingService : Service() {
             return
         }
 
-        Log.i(TAG, "========================================")
-        Log.i(TAG, "=== STREAMING SERVICE: START ===")
-        Log.i(TAG, "SRT Target: srt://${config.srtHost}:${config.srtPort}")
-        Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
-        Log.i(TAG, "========================================")
-        
         // Check if Bondix is available and configured
         val app = application as? OrbiStreamApp
-        val useBondixRelay = app?.isBondixReady() == true && 
-                             app.settingsRepository.hasBondixSettings()
+        val useBondix = app?.isBondixReady() == true && 
+                        app.settingsRepository.hasBondixSettings()
         
-        if (useBondixRelay) {
-            Log.i(TAG, "Bondix available - setting up UDP relay for bonded streaming")
-            app?.configureBondixIfReady()
+        // Choose transport mode:
+        // - UDP when using Bondix (Bondix provides reliability)
+        // - SRT when not using Bondix (need SRT's reliability)
+        val transportMode = if (useBondix) TransportMode.UDP else TransportMode.SRT
+        val configWithTransport = config.copy(transport = transportMode)
+        
+        val protocol = if (useBondix) "UDP (Bondix)" else "SRT"
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "=== STREAMING SERVICE: START ===")
+        Log.i(TAG, "Transport: $protocol")
+        Log.i(TAG, "Target: ${configWithTransport.srtHost}:${configWithTransport.srtPort}")
+        Log.i(TAG, "Stream ID: ${configWithTransport.streamId ?: "(none)"}")
+        Log.i(TAG, "========================================")
+        
+        if (useBondix) {
+            Log.i(TAG, "Bondix available - using UDP transport for bonded streaming")
             
             // Start UDP relay asynchronously, then continue with streaming
             serviceScope.launch {
-                val actualConfig = setupBondixRelay(config)
+                val actualConfig = setupBondixRelay(configWithTransport)
                 continueStartStreaming(actualConfig)
             }
         } else {
-            Log.w(TAG, "Bondix not available - streaming directly without bonding")
-            continueStartStreaming(config)
+            Log.w(TAG, "Bondix not available - using SRT transport directly")
+            continueStartStreaming(configWithTransport)
         }
     }
     
