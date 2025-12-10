@@ -73,16 +73,24 @@ For network bonding functionality, you need to add the Bondix library:
 
 Without the Bondix AAR, the app will use standard single-network streaming.
 
-### Optional: GStreamer Android SDK
+### Required: GStreamer Android SDK
 
-For the native streaming pipeline:
+The app uses GStreamer for video/audio encoding and SRT streaming:
 
-1. Download GStreamer Android SDK from https://gstreamer.freedesktop.org/data/pkg/android/
-2. Extract to a directory
-3. Set `GSTREAMER_ROOT_ANDROID` environment variable to that path
-4. Rebuild the project
+```bash
+# Download GStreamer 1.26.9 for Android
+cd orbistream
+mkdir -p gstreamer-android
+cd gstreamer-android
+curl -L -o gstreamer.tar.xz \
+  "https://gstreamer.freedesktop.org/data/pkg/android/1.26.9/gstreamer-1.0-android-universal-1.26.9.tar.xz"
 
-Without GStreamer, the app builds with a stub implementation.
+# Extract (creates arm64, armv7, x86, x86_64 folders)
+tar -xf gstreamer.tar.xz
+rm gstreamer.tar.xz
+```
+
+The SDK is ~1.4GB and contains prebuilt static libraries for all Android architectures.
 
 ## Building
 

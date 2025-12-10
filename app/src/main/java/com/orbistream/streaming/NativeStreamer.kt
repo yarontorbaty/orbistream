@@ -1,5 +1,6 @@
 package com.orbistream.streaming
 
+import android.content.Context
 import android.util.Log
 
 /**
@@ -15,6 +16,7 @@ object NativeStreamer {
     private const val TAG = "NativeStreamer"
     
     private var libraryLoaded = false
+    private var gstreamerInitialized = false
     private var initialized = false
 
     /**
@@ -26,14 +28,31 @@ object NativeStreamer {
         fun onError(error: String)
     }
 
-    init {
-        try {
+    /**
+     * Initialize GStreamer. Must be called from Application.onCreate() with context.
+     */
+    fun initGStreamer(context: Context): Boolean {
+        if (gstreamerInitialized) return true
+        
+        return try {
+            // Initialize GStreamer Android integration
+            org.freedesktop.gstreamer.GStreamer.init(context)
+            gstreamerInitialized = true
+            Log.i(TAG, "GStreamer initialized successfully")
+            
+            // Now load our native library
+            System.loadLibrary("gstreamer_android")
             System.loadLibrary("orbistream_native")
             libraryLoaded = true
-            Log.i(TAG, "Native library loaded")
+            Log.i(TAG, "Native libraries loaded")
+            
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "GStreamer initialization failed: ${e.message}")
+            false
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "Failed to load native library: ${e.message}")
-            libraryLoaded = false
+            false
         }
     }
 
@@ -42,7 +61,7 @@ object NativeStreamer {
      */
     fun initialize(): Boolean {
         if (!libraryLoaded) {
-            Log.e(TAG, "Cannot initialize: native library not loaded")
+            Log.e(TAG, "Cannot initialize: native library not loaded. Call initGStreamer() first.")
             return false
         }
         

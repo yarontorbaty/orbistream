@@ -5,6 +5,7 @@ import android.util.Log
 import com.orbistream.bondix.BondixManager
 import com.orbistream.bondix.NetworkRegistry
 import com.orbistream.data.SettingsRepository
+import com.orbistream.streaming.NativeStreamer
 
 /**
  * OrbiStreamApp is the Application class that initializes core components:
@@ -44,11 +45,23 @@ class OrbiStreamApp : Application() {
         // Initialize settings repository
         settingsRepository = SettingsRepository(this)
         
+        // Initialize GStreamer
+        initializeGStreamer()
+        
         // Start network tracking
         initializeNetworkTracking()
         
         // Initialize Bondix
         initializeBondix()
+    }
+
+    private fun initializeGStreamer() {
+        Log.d(TAG, "Initializing GStreamer")
+        if (NativeStreamer.initGStreamer(this)) {
+            Log.i(TAG, "GStreamer initialized successfully")
+        } else {
+            Log.e(TAG, "GStreamer initialization failed")
+        }
     }
 
     private fun initializeNetworkTracking() {

@@ -21,10 +21,10 @@ android {
         }
 
         externalNativeBuild {
-            cmake {
-                cppFlags += "-std=c++17"
+            ndkBuild {
                 arguments += listOf(
-                    "-DANDROID_STL=c++_shared"
+                    "NDK_APPLICATION_MK=src/main/jni/Application.mk",
+                    "APP_STL=c++_shared"
                 )
             }
         }
@@ -55,9 +55,15 @@ android {
     }
 
     externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+        ndkBuild {
+            path = file("src/main/jni/Android.mk")
+        }
+    }
+
+    // Copy GStreamer Java integration
+    sourceSets {
+        getByName("main") {
+            java.srcDirs("src/main/java", "gstreamer-java")
         }
     }
 }
@@ -94,4 +100,3 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 }
-

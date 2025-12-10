@@ -82,3 +82,9 @@ secrets.properties
 # MacOS
 .DS_Store
 
+# GStreamer Android SDK (download separately - too large for git)
+gstreamer-android/
+
+# Keep the JNI source but not old CMake config
+app/src/main/cpp/
+
