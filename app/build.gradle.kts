@@ -69,7 +69,6 @@ android {
     // ndk-build outputs to src/main/libs (not jni/libs)
     sourceSets {
         getByName("main") {
-            java.srcDirs("src/main/java", "gstreamer-java")
             jniLibs.srcDirs("src/main/libs")
         }
     }
