@@ -283,30 +283,49 @@ class BondixManager(private val context: Context) {
     /**
      * Get tunnel status/metrics from Bondix.
      * 
+     * Note: The get-status and get-interface-stats commands may not be 
+     * implemented in all versions of libbondix. Returns basic status if
+     * stats aren't available.
+     * 
      * @return BondixStats with current metrics, or null if unavailable
      */
     fun getStats(): BondixStats? {
         if (!isInitialized) return null
 
         return try {
-            // Query tunnel status
+            // Try to query tunnel status (may not be implemented)
             val statusConfig = JSONObject().apply {
                 put("target", "tunnel")
                 put("action", "get-status")
             }
             val statusResponse = configure(statusConfig.toString())
             
-            // Query interface stats
+            // Try to query interface stats (may not be implemented)
             val ifaceConfig = JSONObject().apply {
                 put("target", "tunnel")
                 put("action", "get-interface-stats")
             }
             val ifaceResponse = configure(ifaceConfig.toString())
             
+            // Check if commands were successful
+            val statusJson = JSONObject(statusResponse)
+            val ifaceJson = JSONObject(ifaceResponse)
+            
+            // If both return errors, stats aren't available
+            if (statusJson.optString("result") == "error" && 
+                ifaceJson.optString("result") == "error") {
+                // Return basic connected status
+                return BondixStats(
+                    connected = true, // Bondix is initialized
+                    tunnelState = "connected"
+                )
+            }
+            
             parseStats(statusResponse, ifaceResponse)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get stats: ${e.message}")
-            null
+            // Return basic status on error
+            BondixStats(connected = isInitialized, tunnelState = "unknown")
         }
     }
 
@@ -365,12 +384,33 @@ class BondixManager(private val context: Context) {
         }
 
         try {
-            setTunnel(tunnelName, tunnelPassword)
-            addServer(serverHost)
-            enableProxy(port = proxyPort)
-            updateInterfacesFromRegistry()
-            setPreset("bonding")
+            Log.i(TAG, "--- Bondix Configuration Start ---")
+            
+            // Step 1: Set tunnel credentials
+            val tunnelResult = setTunnel(tunnelName, tunnelPassword)
+            Log.i(TAG, "1. set-tunnel: $tunnelResult")
+            
+            // Step 2: Add server endpoint
+            val serverResult = addServer(serverHost)
+            Log.i(TAG, "2. add-server: $serverResult")
+            
+            // Step 3: Enable SOCKS5 proxy
+            val proxyResult = enableProxy(port = proxyPort)
+            Log.i(TAG, "3. enable-proxy-server: $proxyResult")
+            
+            // Step 4: Update network interfaces
+            val ifaceResult = updateInterfacesFromRegistry()
+            Log.i(TAG, "4. update-interfaces: $ifaceResult")
+            
+            // Step 5: Set bonding preset
+            val presetResult = setPreset("bonding")
+            Log.i(TAG, "5. set-preset: $presetResult")
+            
+            // Step 6: Enable JVM proxy for Java/Kotlin traffic
             enableJvmProxy()
+            Log.i(TAG, "6. JVM proxy enabled: $DEFAULT_PROXY_HOST:$proxyPort")
+            
+            Log.i(TAG, "--- Bondix Configuration Complete ---")
             
             statusListener?.onBondixStatusChanged(true, "Connected")
             return true

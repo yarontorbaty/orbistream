@@ -117,6 +117,18 @@ class StreamingService : Service() {
         Log.i(TAG, "SRT Target: srt://${config.srtHost}:${config.srtPort}")
         Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
         Log.i(TAG, "========================================")
+        
+        // Ensure Bondix is configured before streaming
+        val app = application as? com.orbistream.OrbiStreamApp
+        app?.let {
+            if (it.isBondixReady()) {
+                Log.i(TAG, "Bondix tunnel is ready")
+                // Reconfigure to ensure tunnel is connected
+                it.configureBondixIfReady()
+            } else {
+                Log.w(TAG, "Bondix not available - streaming without bonding")
+            }
+        }
 
         currentConfig = config
         _streamState.value = StreamState.STARTING

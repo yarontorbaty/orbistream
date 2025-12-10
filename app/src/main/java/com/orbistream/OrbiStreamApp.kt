@@ -106,7 +106,12 @@ class OrbiStreamApp : Application() {
                 Log.i(TAG, "Bondix initialized successfully")
                 
                 // Configure Bondix if settings are available
-                configureBondixIfReady()
+                if (settingsRepository.hasBondixSettings()) {
+                    Log.i(TAG, "Bondix settings found, configuring tunnel...")
+                    configureBondixIfReady()
+                } else {
+                    Log.w(TAG, "No Bondix settings configured - please set tunnel name, password, and server in Settings")
+                }
             } else {
                 Log.w(TAG, "Bondix initialization failed - library may not be included")
             }
@@ -131,7 +136,11 @@ class OrbiStreamApp : Application() {
             return
         }
 
-        Log.i(TAG, "Configuring Bondix with saved settings")
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "=== CONFIGURING BONDIX TUNNEL ===")
+        Log.i(TAG, "Tunnel: ${settingsRepository.tunnelName}")
+        Log.i(TAG, "Server: ${settingsRepository.endpointServer}")
+        Log.i(TAG, "========================================")
         
         val success = bondixManager.configureAll(
             tunnelName = settingsRepository.tunnelName,
@@ -140,9 +149,9 @@ class OrbiStreamApp : Application() {
         )
         
         if (success) {
-            Log.i(TAG, "Bondix configured successfully")
+            Log.i(TAG, "Bondix tunnel configured successfully")
         } else {
-            Log.e(TAG, "Bondix configuration failed")
+            Log.e(TAG, "Bondix tunnel configuration failed")
         }
     }
 
