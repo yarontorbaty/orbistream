@@ -294,6 +294,16 @@ Java_com_orbistream_streaming_NativeStreamer_nativeGetStats(JNIEnv* env, jclass 
     
     StreamStats stats = g_streamer->getStats();
     
+    // Log stats periodically for debugging
+    static int logCount = 0;
+    if (++logCount % 5 == 0) {  // Log every 5th call
+        LOGI("Stats: bitrate=%.0f bps, bytes=%llu, rtt=%.0f ms, state=%d", 
+             stats.currentBitrate, 
+             (unsigned long long)stats.bytesSent,
+             stats.rtt,
+             static_cast<int>(stats.connectionState));
+    }
+    
     // Extended stats array:
     // [0] currentBitrate, [1] bytesSent, [2] packetsLost, [3] rtt, [4] streamTimeMs,
     // [5] packetsRetransmitted, [6] packetsDropped, [7] bandwidth, [8] connectionState
