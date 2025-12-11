@@ -127,14 +127,20 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
        << " threads=2 ! "
        << "queue name=video_queue max-size-buffers=3 leaky=downstream ! mux. ";
     
-    // TEMPORARILY DISABLED: Audio source causing timestamp issues
-    // TODO: Fix audio timestamp synchronization
-    // ss << "appsrc name=audio_src format=time is-live=true do-timestamp=true "
-    //    << "caps=\"audio/x-raw,format=S16LE,layout=interleaved,rate=" << config.sampleRate 
-    //    << ",channels=" << config.audioChannels << "\" ! ";
-    // ss << "audioconvert ! "
-    //    << "voaacenc bitrate=" << config.audioBitrate << " ! "
-    //    << "aacparse ! queue name=audio_queue max-size-time=3000000000 max-size-buffers=0 max-size-bytes=0 ! mux. ";
+    // Audio processing chain (matching video pattern with rate element):
+    // - audiorate: ensures consistent audio timing (like videorate for video)
+    // - audioconvert + audioresample: format conversion
+    // - voaacenc: AAC encoding
+    // - leaky queue: drops old samples if backed up
+    ss << "appsrc name=audio_src format=time is-live=true do-timestamp=true "
+       << "caps=\"audio/x-raw,format=S16LE,layout=interleaved,rate=" << config.sampleRate 
+       << ",channels=" << config.audioChannels << "\" ! "
+       << "audiorate skip-to-first=true ! "
+       << "audioconvert ! "
+       << "audioresample ! "
+       << "voaacenc bitrate=" << config.audioBitrate << " ! "
+       << "aacparse ! "
+       << "queue name=audio_queue max-size-buffers=3 leaky=downstream ! mux. ";
     
     // Muxer - alignment=7 aligns to MPEG-TS packet boundaries (like MCRBox)
     ss << "mpegtsmux name=mux alignment=7 ! ";
@@ -204,27 +210,26 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     
     // Get appsrc elements for pushing data
     videoAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "video_src");
-    // TEMPORARILY DISABLED: audioAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "audio_src");
-    audioAppSrc = nullptr;  // Audio disabled for testing
+    audioAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "audio_src");
     GstElement* videoEnc = gst_bin_get_by_name(GST_BIN(pipeline), "video_enc");
     
-    if (!videoAppSrc) {
-        LOGE("Failed to get video appsrc element");
+    if (!videoAppSrc || !audioAppSrc) {
+        LOGE("Failed to get appsrc elements (video=%p, audio=%p)", videoAppSrc, audioAppSrc);
         cleanup();
         return false;
     }
     
-    // Configure appsrc for streaming
+    // Configure video appsrc for streaming
     g_object_set(videoAppSrc,
         "stream-type", 0,  // GST_APP_STREAM_TYPE_STREAM
         "format", GST_FORMAT_TIME,
         nullptr);
     
-    // TEMPORARILY DISABLED: Audio appsrc config
-    // g_object_set(audioAppSrc,
-    //     "stream-type", 0,
-    //     "format", GST_FORMAT_TIME,
-    //     nullptr);
+    // Configure audio appsrc for streaming
+    g_object_set(audioAppSrc,
+        "stream-type", 0,
+        "format", GST_FORMAT_TIME,
+        nullptr);
 
     // Pad probe on x264enc src to inspect first few buffers (NAL headers, SPS/PPS/IDR presence)
     if (videoEnc) {
