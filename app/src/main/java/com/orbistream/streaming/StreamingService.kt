@@ -324,12 +324,16 @@ class StreamingService : Service() {
         statsJob?.cancel()
         statsJob = serviceScope.launch {
             while (isActive && NativeStreamer.isStreaming()) {
-                NativeStreamer.getStats()?.let { stats ->
-                    _streamStats.value = stats
-                    updateNotification(stats)
+                // Get stats on IO thread to avoid blocking main thread
+                val stats = withContext(Dispatchers.IO) {
+                    NativeStreamer.getStats()
+                }
+                stats?.let {
+                    _streamStats.value = it
+                    updateNotification(it)
                     
                     // Check for connection state changes
-                    checkConnectionState(stats.connectionState)
+                    checkConnectionState(it.connectionState)
                 }
                 delay(1000)
             }

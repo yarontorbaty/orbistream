@@ -395,7 +395,10 @@ class StreamingActivity : AppCompatActivity() {
         bondixStatsJob?.cancel()
         bondixStatsJob = lifecycleScope.launch {
             while (isActive) {
-                val stats = OrbiStreamApp.instance.bondixManager.getStats()
+                // Get stats on IO thread to avoid blocking main thread (JNI calls)
+                val stats = withContext(Dispatchers.IO) {
+                    OrbiStreamApp.instance.bondixManager.getStats()
+                }
                 stats?.let { updateBondixStats(it) }
                 delay(1000) // Poll every second
             }
