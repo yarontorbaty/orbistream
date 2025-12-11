@@ -236,7 +236,7 @@ class StreamingActivity : AppCompatActivity() {
         Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
         Log.i(TAG, "Video: ${config.videoWidth}x${config.videoHeight} @ ${config.frameRate}fps")
         Log.i(TAG, "Video bitrate: ${config.videoBitrate / 1000} kbps")
-        Log.i(TAG, "Encoder: preset=${config.encoderPreset}, keyframe=${config.keyframeInterval}s, bframes=${config.bFrames}")
+        Log.i(TAG, "Encoder: hw=${config.useHardwareEncoder}, preset=${config.encoderPreset}, keyframe=${config.keyframeInterval}s, bframes=${config.bFrames}")
         Log.i(TAG, "Audio: ${config.sampleRate}Hz @ ${config.audioBitrate / 1000} kbps")
         Log.i(TAG, "========================================")
         
@@ -256,6 +256,7 @@ class StreamingActivity : AppCompatActivity() {
             putExtra(StreamingService.EXTRA_ENCODER_PRESET, config.encoderPreset.value)
             putExtra(StreamingService.EXTRA_KEYFRAME_INTERVAL, config.keyframeInterval)
             putExtra(StreamingService.EXTRA_B_FRAMES, config.bFrames)
+            putExtra(StreamingService.EXTRA_USE_HARDWARE_ENCODER, config.useHardwareEncoder)
         }
         
         startForegroundService(intent)
@@ -354,6 +355,25 @@ class StreamingActivity : AppCompatActivity() {
         binding.srtStatsRtt.text = String.format("RTT: %.0f ms", stats.rtt)
         binding.srtStatsDropped.text = "Dropped: ${stats.packetsDropped} pkts"
         binding.srtStatsDuration.text = "Duration: ${stats.getFormattedDuration()}"
+        
+        // Frame rate stats
+        binding.srtStatsFps.text = getString(R.string.srt_stats_fps, stats.outputFps, stats.inputFps)
+        
+        // Highlight if dropping frames
+        val fpsColor = if (stats.isDroppingFrames()) {
+            ContextCompat.getColor(this, R.color.status_disconnected)  // Red when dropping
+        } else {
+            ContextCompat.getColor(this, R.color.text_secondary)
+        }
+        binding.srtStatsFps.setTextColor(fpsColor)
+        
+        // Encoder type
+        val encoderType = if (stats.hardwareEncoderActive) {
+            getString(R.string.encoder_hardware)
+        } else {
+            getString(R.string.encoder_software)
+        }
+        binding.srtStatsEncoder.text = getString(R.string.srt_stats_encoder, encoderType)
     }
     
     private fun formatBytes(bytes: Long): String {

@@ -25,6 +25,11 @@
     <string name="srt_stats_bytes_sent">Sent: %1$s</string>
     <string name="srt_stats_packets_lost">Lost: %1$d pkts</string>
     <string name="srt_stats_rtt">RTT: %1$.0f ms</string>
+    <string name="srt_stats_fps">FPS: %1$.0f / %2$.0f</string>
+    <string name="srt_stats_fps_dropped">Dropped: %1$d frames</string>
+    <string name="srt_stats_encoder">Encoder: %1$s</string>
+    <string name="encoder_hardware">HW</string>
+    <string name="encoder_software">SW</string>
     
     <!-- Settings Activity -->
     <string name="title_settings">Settings</string>
@@ -36,6 +41,8 @@
     <string name="section_bondix">Bondix Configuration</string>
     <string name="label_bondix_enabled">Enable Bondix Bonding</string>
     <string name="label_bondix_enabled_desc">Route traffic through bonded network tunnel</string>
+    <string name="label_bondix_for_srt">Route SRT through Bondix</string>
+    <string name="label_bondix_for_srt_desc">Send SRT traffic through bonded tunnel (combines SRT + Bondix reliability)</string>
     <string name="label_tunnel_name">Tunnel Name</string>
     <string name="label_tunnel_password">Tunnel Password</string>
     <string name="label_endpoint_server">Endpoint Server</string>
@@ -44,13 +51,19 @@
     <string name="label_bitrate">Bitrate (kbps)</string>
     <string name="label_framerate">Frame Rate</string>
     <string name="section_encoder">Encoder Settings</string>
-    <string name="label_encoder_preset">Encoder Preset</string>
+    <string name="label_hardware_encoder">Hardware Encoder</string>
+    <string name="label_hardware_encoder_desc">Use MediaCodec hardware acceleration if available</string>
+    <string name="label_hardware_encoder_status_available">Available - using hardware</string>
+    <string name="label_hardware_encoder_status_unavailable">Not available - using software (x264)</string>
+    <string name="label_encoder_preset">Encoder Preset (software only)</string>
     <string name="label_keyframe_interval">Keyframe Interval (seconds)</string>
-    <string name="label_b_frames">B-Frames</string>
+    <string name="label_b_frames">B-Frames (software only)</string>
     <string name="section_audio">Audio Settings</string>
     <string name="label_audio_bitrate">Audio Bitrate (kbps)</string>
     <string name="label_sample_rate">Sample Rate</string>
     <string name="btn_save">Save Settings</string>
+    <string name="btn_restore_defaults">Restore Defaults</string>
+    <string name="defaults_restored">Settings restored to defaults</string>
     
     <!-- Notifications -->
     <string name="notification_channel_name">Streaming</string>

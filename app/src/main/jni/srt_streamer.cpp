@@ -70,8 +70,20 @@ private:
     int64_t lastBytesSent = 0;
     std::chrono::steady_clock::time_point lastBitrateTime;
     
-    // Byte counting from muxer (fallback when sink stats aren't available)
+    // Byte counting from encoder (since muxer needs both audio+video to flow)
     std::atomic<uint64_t> muxerBytesSent{0};
+    
+    // Frame rate tracking
+    std::atomic<uint64_t> inputFrameCount{0};    // Frames pushed to video appsrc
+    std::atomic<uint64_t> outputFrameCount{0};   // Frames output from encoder
+    std::chrono::steady_clock::time_point lastFpsCalcTime;
+    uint64_t lastInputFrameCount = 0;
+    uint64_t lastOutputFrameCount = 0;
+    double calculatedInputFps = 0.0;
+    double calculatedOutputFps = 0.0;
+    
+    // Hardware encoder state
+    bool usingHardwareEncoder = false;
     
     // Adaptive bitrate
     int currentEncoderBitrate = 0;    // Current encoder bitrate in kbps
@@ -79,6 +91,9 @@ private:
     int minBitrate = 500;             // Minimum bitrate in kbps
     int maxBitrate = 0;               // Maximum bitrate in kbps (from config)
     std::chrono::steady_clock::time_point lastBitrateAdjustTime;
+    
+    // Hardware encoder detection
+    static bool isHardwareEncoderAvailable();
 };
 
 // Helper to convert EncoderPreset to x264 string
@@ -95,6 +110,54 @@ const char* SrtStreamer::Impl::presetToString(EncoderPreset preset) {
         case EncoderPreset::VERYSLOW: return "veryslow";
         default: return "ultrafast";
     }
+}
+
+// Check if Android MediaCodec hardware encoder is available
+bool SrtStreamer::Impl::isHardwareEncoderAvailable() {
+#if GSTREAMER_AVAILABLE
+    // Try to find amcvidenc (Android Media Codec) H.264 encoder
+    // Common element names: amcvidenc-omxgoogleh264encoder, amcvidenc-c2androidavch264encoder, etc.
+    GstElementFactory* factory = nullptr;
+    
+    // Try various known Android hardware encoder element names
+    const char* hwEncoders[] = {
+        "amcvidenc-c2androidavch264encoder",      // Android 10+ Codec2
+        "amcvidenc-omxgoogleh264encoder",         // OMX fallback
+        "amcvidenc-omxqaboradeh264encoder",       // Qualcomm
+        "amcvidenc-omxexynosh264enc",             // Samsung Exynos
+        "amcvidenc-omxtikicodesavch264encoder",   // MediaTek
+        nullptr
+    };
+    
+    for (int i = 0; hwEncoders[i] != nullptr; i++) {
+        factory = gst_element_factory_find(hwEncoders[i]);
+        if (factory) {
+            LOGI("Hardware encoder available: %s", hwEncoders[i]);
+            gst_object_unref(factory);
+            return true;
+        }
+    }
+    
+    // Try to find any amcvidenc element by creating a registry query
+    GstRegistry* registry = gst_registry_get();
+    GList* plugins = gst_registry_get_plugin_list(registry);
+    
+    for (GList* p = plugins; p; p = p->next) {
+        GstPlugin* plugin = GST_PLUGIN(p->data);
+        const gchar* name = gst_plugin_get_name(plugin);
+        if (g_str_has_prefix(name, "androidmedia")) {
+            LOGI("Found androidmedia plugin - hardware encoding may be available");
+            gst_plugin_list_free(plugins);
+            return true;
+        }
+    }
+    gst_plugin_list_free(plugins);
+    
+    LOGI("No hardware encoder found - using software encoding");
+    return false;
+#else
+    return false;
+#endif
 }
 
 // Static GStreamer initialization
@@ -122,7 +185,7 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
     // The pipeline uses appsrc for both video and audio so we can push
     // frames from the Android camera and microphone.
     //
-    // Video path: appsrc -> videoconvert -> x264enc -> h264parse
+    // Video path: appsrc -> videoconvert -> (hw or sw encoder) -> queue
     // Audio path: appsrc -> audioconvert -> voaacenc -> aacparse
     // Both paths mux into mpegtsmux -> (srtsink or udpsink)
 
@@ -131,13 +194,23 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
     const char* presetStr = presetToString(config.preset);
     int gopSize = config.frameRate * config.keyframeInterval;
     
+    // Check for hardware encoder
+    bool hwAvailable = isHardwareEncoderAvailable();
+    usingHardwareEncoder = config.useHardwareEncoder && hwAvailable;
+    
     LOGI("=== STREAMING CONFIG ===");
     LOGI("Transport: %s", transportStr);
     LOGI("Target: %s:%d", config.srtHost.c_str(), config.srtPort);
     LOGI("Video: %dx%d @ %d fps, bitrate %d bps", 
          config.videoWidth, config.videoHeight, config.frameRate, config.videoBitrate);
-    LOGI("Encoder: preset=%s, keyframe=%ds (GOP=%d), bframes=%d",
-         presetStr, config.keyframeInterval, gopSize, config.bFrames);
+    LOGI("Encoder: %s (hw=%s, requested=%s)", 
+         usingHardwareEncoder ? "HARDWARE (MediaCodec)" : "SOFTWARE (x264)",
+         hwAvailable ? "available" : "not available",
+         config.useHardwareEncoder ? "yes" : "no");
+    if (!usingHardwareEncoder) {
+        LOGI("Encoder settings: preset=%s, keyframe=%ds (GOP=%d), bframes=%d",
+             presetStr, config.keyframeInterval, gopSize, config.bFrames);
+    }
     LOGI("Audio: %d Hz, bitrate %d bps", config.sampleRate, config.audioBitrate);
     if (config.useProxy && config.transport == TransportMode::UDP) {
         LOGI("Bondix: Enabled - reliability handled by tunnel");
@@ -154,20 +227,31 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
        << "caps=\"video/x-raw,format=NV21,width=" << config.videoWidth 
        << ",height=" << config.videoHeight << ",framerate=" << config.frameRate << "/1\" ! ";
     
-    // Video processing chain (matching MCRBox pattern):
+    // Video processing chain:
     // - videorate: ensures consistent frame timing (critical for camera input!)
     // - videoconvert -> videoscale -> caps to target WxH  
-    // - x264enc with configurable preset and GOP
-    // - Direct to mux (no h264parse - MCRBox doesn't use it)
+    // - encoder (hardware MediaCodec or software x264)
+    // - queue with leaky downstream (drops frames if CPU can't keep up)
     ss << "videorate drop-only=true skip-to-first=true ! "
        << "videoconvert ! "
-       << "videoscale ! video/x-raw,width=" << config.videoWidth << ",height=" << config.videoHeight << " ! "
-       << "x264enc name=video_enc tune=zerolatency speed-preset=" << presetStr
-       << " bitrate=" << (config.videoBitrate / 1000)
-       << " key-int-max=" << gopSize  // GOP = frameRate * keyframeInterval
-       << " bframes=" << config.bFrames
-       << " threads=2 ! "
-       << "queue name=video_queue max-size-buffers=3 leaky=downstream ! mux. ";
+       << "videoscale ! video/x-raw,width=" << config.videoWidth << ",height=" << config.videoHeight << " ! ";
+    
+    if (usingHardwareEncoder) {
+        // Hardware encoder (Android MediaCodec via amcvidenc)
+        // Note: amcvidenc auto-selects best available H.264 hardware encoder
+        ss << "amcvidenc name=video_enc "
+           << "bitrate=" << config.videoBitrate << " "
+           << "i-frame-interval=" << (config.keyframeInterval * 1000) << " ! ";  // milliseconds
+    } else {
+        // Software encoder (x264enc)
+        ss << "x264enc name=video_enc tune=zerolatency speed-preset=" << presetStr
+           << " bitrate=" << (config.videoBitrate / 1000)
+           << " key-int-max=" << gopSize
+           << " bframes=" << config.bFrames
+           << " threads=2 ! ";
+    }
+    
+    ss << "queue name=video_queue max-size-buffers=3 leaky=downstream ! mux. ";
     
     // Audio processing chain (matching video pattern with rate element):
     // - audiorate: ensures consistent audio timing (like videorate for video)
@@ -304,22 +388,36 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
         "format", GST_FORMAT_TIME,
         nullptr);
 
-    // Pad probe on x264enc src to:
+    // Pad probe on encoder src to:
     // 1. Count encoded video bytes for bitrate calculation
-    // 2. Inspect NAL headers for SPS/PPS/IDR presence
+    // 2. Count output frames for fps stats
+    // 3. Inspect NAL headers for SPS/PPS/IDR presence (debug)
     if (videoEncoder) {
+        // Store pointers to both counters in a struct for the lambda
+        struct EncoderProbeData {
+            std::atomic<uint64_t>* byteCounter;
+            std::atomic<uint64_t>* frameCounter;
+        };
+        // Note: This leaks a small struct but it's needed for the probe lifetime
+        auto* probeData = new EncoderProbeData{&muxerBytesSent, &outputFrameCount};
+        
         GstPad* encSrc = gst_element_get_static_pad(videoEncoder, "src");
         if (encSrc) {
             gst_pad_add_probe(encSrc, GST_PAD_PROBE_TYPE_BUFFER,
                 [](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
-                    auto* counter = static_cast<std::atomic<uint64_t>*>(user_data);
+                    auto* data = static_cast<EncoderProbeData*>(user_data);
                     GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
                     if (!buf) return GST_PAD_PROBE_OK;
                     
                     // Count encoded bytes
                     gsize bufSize = gst_buffer_get_size(buf);
-                    if (counter) {
-                        counter->fetch_add(bufSize, std::memory_order_relaxed);
+                    if (data->byteCounter) {
+                        data->byteCounter->fetch_add(bufSize, std::memory_order_relaxed);
+                    }
+                    
+                    // Count output frames
+                    if (data->frameCounter) {
+                        data->frameCounter->fetch_add(1, std::memory_order_relaxed);
                     }
                     
                     // Debug logging for first 10 buffers
@@ -358,38 +456,47 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
                         nalList << nalTypes[i] << (i + 1 == nalTypes.size() ? "" : ",");
                     }
                     
-                    LOGI("h264probe buf=%zu nal_types=[%s] IDR=%d SPS=%d PPS=%d total=%llu", 
+                    LOGI("h264probe buf=%zu nal_types=[%s] IDR=%d SPS=%d PPS=%d bytes=%llu frames=%llu", 
                          map.size, nalList.str().c_str(), hasIDR, hasSPS, hasPPS,
-                         counter ? (unsigned long long)counter->load() : 0ULL);
+                         data->byteCounter ? (unsigned long long)data->byteCounter->load() : 0ULL,
+                         data->frameCounter ? (unsigned long long)data->frameCounter->load() : 0ULL);
                     
                     gst_buffer_unmap(buf, &map);
                     logged++;
                     return GST_PAD_PROBE_OK;
                 },
-                &muxerBytesSent, nullptr);  // Reuse muxerBytesSent for h264 bytes
+                probeData, nullptr);
             gst_object_unref(encSrc);
-            LOGI("Added h264 byte counting probe on video encoder");
+            LOGI("Added byte/frame counting probe on video encoder");
         }
         // Note: videoEncoder is unreffed in cleanup()
     }
 
-    // Pad probe on video appsrc sink to confirm camera frames enter pipeline
+    // Pad probe on video appsrc src to count input frames
     if (videoAppSrc) {
-        GstPad* vsrc_sink = gst_element_get_static_pad(videoAppSrc, "src");
-        if (vsrc_sink) {
-            gst_pad_add_probe(vsrc_sink, GST_PAD_PROBE_TYPE_BUFFER,
-                [](GstPad*, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
-                    static int vlogged = 0;
-                    if (vlogged >= 5) return GST_PAD_PROBE_OK;
+        GstPad* vsrc_src = gst_element_get_static_pad(videoAppSrc, "src");
+        if (vsrc_src) {
+            gst_pad_add_probe(vsrc_src, GST_PAD_PROBE_TYPE_BUFFER,
+                [](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+                    auto* counter = static_cast<std::atomic<uint64_t>*>(user_data);
                     GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
-                    if (buf) {
-                        LOGI("video_src incoming buffer size=%zu", (size_t)gst_buffer_get_size(buf));
-                        vlogged++;
+                    if (buf && counter) {
+                        counter->fetch_add(1, std::memory_order_relaxed);
+                        
+                        // Debug logging for first 5 frames
+                        static int vlogged = 0;
+                        if (vlogged < 5) {
+                            LOGI("video_src incoming buffer size=%zu frame=%llu", 
+                                 (size_t)gst_buffer_get_size(buf),
+                                 (unsigned long long)counter->load());
+                            vlogged++;
+                        }
                     }
                     return GST_PAD_PROBE_OK;
                 },
-                nullptr, nullptr);
-            gst_object_unref(vsrc_sink);
+                &inputFrameCount, nullptr);
+            gst_object_unref(vsrc_src);
+            LOGI("Added input frame counter on video appsrc");
         }
     }
     
@@ -442,8 +549,15 @@ bool SrtStreamer::Impl::start() {
     startTime = std::chrono::steady_clock::now();
     lastBitrateTime = startTime;
     lastBitrateAdjustTime = startTime;
+    lastFpsCalcTime = startTime;
     lastBytesSent = 0;
     muxerBytesSent = 0;
+    inputFrameCount = 0;
+    outputFrameCount = 0;
+    lastInputFrameCount = 0;
+    lastOutputFrameCount = 0;
+    calculatedInputFps = 0.0;
+    calculatedOutputFps = 0.0;
     
     // Set initial connection state
     {
@@ -780,7 +894,8 @@ void SrtStreamer::Impl::updateAdaptiveBitrate() {
 
 StreamStats SrtStreamer::Impl::getStats() const {
     // Need to call updateSrtStats which modifies state, so cast away const
-    const_cast<SrtStreamer::Impl*>(this)->updateSrtStats();
+    auto* mutableThis = const_cast<SrtStreamer::Impl*>(this);
+    mutableThis->updateSrtStats();
     
     std::lock_guard<std::mutex> lock(statsMutex);
     StreamStats currentStats = stats;
@@ -789,6 +904,29 @@ StreamStats SrtStreamer::Impl::getStats() const {
         auto now = std::chrono::steady_clock::now();
         currentStats.streamTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - startTime).count();
+        
+        // Calculate FPS every second
+        auto fpsDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - mutableThis->lastFpsCalcTime).count();
+        if (fpsDuration >= 1000) {
+            uint64_t currentInputFrames = inputFrameCount.load(std::memory_order_relaxed);
+            uint64_t currentOutputFrames = outputFrameCount.load(std::memory_order_relaxed);
+            
+            uint64_t inputDiff = currentInputFrames - mutableThis->lastInputFrameCount;
+            uint64_t outputDiff = currentOutputFrames - mutableThis->lastOutputFrameCount;
+            
+            mutableThis->calculatedInputFps = (inputDiff * 1000.0) / fpsDuration;
+            mutableThis->calculatedOutputFps = (outputDiff * 1000.0) / fpsDuration;
+            
+            mutableThis->lastInputFrameCount = currentInputFrames;
+            mutableThis->lastOutputFrameCount = currentOutputFrames;
+            mutableThis->lastFpsCalcTime = now;
+        }
+        
+        currentStats.inputFps = mutableThis->calculatedInputFps;
+        currentStats.outputFps = mutableThis->calculatedOutputFps;
+        currentStats.framesDropped = inputFrameCount.load() - outputFrameCount.load();
+        currentStats.hardwareEncoderActive = usingHardwareEncoder;
     }
     
     return currentStats;

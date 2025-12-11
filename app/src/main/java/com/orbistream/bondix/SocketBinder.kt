@@ -25,6 +25,13 @@ object SocketBinder {
      */
     @JvmStatic
     fun bindFdToNetwork(id: String, fdInt: Int): Boolean {
+        // Handle empty or localhost IDs - these don't need network binding
+        // This is likely used for the local SOCKS5 proxy socket
+        if (id.isBlank() || id.equals("localhost", ignoreCase = true) || id == "127.0.0.1") {
+            Log.d(TAG, "Skipping bind for local/empty interface id: '$id', FD: $fdInt")
+            return true  // Return success - no binding needed for localhost
+        }
+        
         val nw = NetworkRegistry.findNetwork(id)
         if (nw == null) {
             Log.w(TAG, "No network found for id: $id")

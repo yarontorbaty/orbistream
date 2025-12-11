@@ -58,6 +58,12 @@ class BondixManager(private val context: Context) {
             if (success) {
                 isInitialized = true
                 Log.i(TAG, "Bondix initialized successfully")
+                
+                // Enable Bondix native logging to a file we can read
+                val logFile = context.cacheDir.absolutePath + "/bondix.log"
+                val logResult = enableNativeLogging(logFile)
+                Log.i(TAG, "Bondix logging enabled to: $logFile -> $logResult")
+                
                 statusListener?.onBondixStatusChanged(true, "Initialized")
             } else {
                 Log.e(TAG, "Bondix initialization failed")
@@ -77,6 +83,22 @@ class BondixManager(private val context: Context) {
         }
     }
 
+    /**
+     * Enable native Bondix logging to a file.
+     * Per wiki: {"target": "system", "action": "set-log", "file": "...", "fileMode": "append"}
+     */
+    fun enableNativeLogging(logFile: String): String {
+        if (!isInitialized) return """{"error": "not initialized"}"""
+        
+        val config = JSONObject().apply {
+            put("target", "system")
+            put("action", "set-log")
+            put("file", logFile)
+            put("fileMode", "append")
+        }
+        return configure(config.toString())
+    }
+    
     /**
      * Configure tunnel credentials.
      * 
@@ -136,6 +158,7 @@ class BondixManager(private val context: Context) {
 
         this.proxyPort = port
 
+        // Local Android SDK docs say "enable-proxy-server" (wiki says "enable-proxy" but that returns unknown_action)
         val config = JSONObject().apply {
             put("target", "tunnel")
             put("action", "enable-proxy-server")
@@ -162,7 +185,8 @@ class BondixManager(private val context: Context) {
         interfaces.forEach { (id, name) ->
             interfacesObj.put(id, JSONObject().apply {
                 put("name", name)
-                put("preset", "speed")
+                // Don't set preset - the Android SDK doesn't seem to support them
+                // and the tunnel connects fine without it
             })
         }
 
@@ -212,6 +236,26 @@ class BondixManager(private val context: Context) {
             put("target", "tunnel")
             put("action", "set-preset")
             put("preset", preset)
+        }
+        
+        return configure(config.toString())
+    }
+    
+    /**
+     * Connect/start the tunnel.
+     * This initiates the actual connection to the Bondix server.
+     * 
+     * @return Configuration response from Bondix
+     */
+    fun connect(): String {
+        if (!isInitialized) {
+            Log.e(TAG, "Bondix not initialized")
+            return """{"error": "not initialized"}"""
+        }
+
+        val config = JSONObject().apply {
+            put("target", "tunnel")
+            put("action", "connect")
         }
         
         return configure(config.toString())
@@ -283,9 +327,8 @@ class BondixManager(private val context: Context) {
     /**
      * Get tunnel status/metrics from Bondix.
      * 
-     * Note: The get-status and get-interface-stats commands may not be 
-     * implemented in all versions of libbondix. Returns basic status if
-     * stats aren't available.
+     * Uses "status" and "get-interface" commands per wiki.
+     * Returns basic status if stats aren't available.
      * 
      * @return BondixStats with current metrics, or null if unavailable
      */
@@ -293,17 +336,18 @@ class BondixManager(private val context: Context) {
         if (!isInitialized) return null
 
         return try {
-            // Try to query tunnel status (may not be implemented)
+            // Try to query tunnel status (wiki: "status" command)
             val statusConfig = JSONObject().apply {
                 put("target", "tunnel")
-                put("action", "get-status")
+                put("action", "status")
             }
             val statusResponse = configure(statusConfig.toString())
             
-            // Try to query interface stats (may not be implemented)
+            // Try to query interface stats (wiki: "get-interface" with index)
             val ifaceConfig = JSONObject().apply {
                 put("target", "tunnel")
-                put("action", "get-interface-stats")
+                put("action", "get-interface")
+                put("index", 0)
             }
             val ifaceResponse = configure(ifaceConfig.toString())
             
@@ -334,28 +378,39 @@ class BondixManager(private val context: Context) {
         
         try {
             val status = JSONObject(statusJson)
-            stats.connected = status.optBoolean("connected", false)
-            stats.tunnelState = status.optString("state", "unknown")
-            stats.serverHost = status.optString("server", "")
-            stats.latencyMs = status.optDouble("latency_ms", 0.0)
-            stats.packetLoss = status.optDouble("packet_loss", 0.0)
+            // Check "status" field (string) - Bondix returns {"status":"connected"} not {"connected":true}
+            val tunnelStatus = status.optString("status", "")
+            stats.connected = (tunnelStatus == "connected")
+            stats.tunnelState = tunnelStatus.ifEmpty { "unknown" }
+            stats.serverHost = status.optString("endpoint", "")
             
-            val iface = JSONObject(ifaceJson)
-            val interfaces = iface.optJSONObject("interfaces")
-            interfaces?.keys()?.forEach { key ->
-                val ifaceData = interfaces.getJSONObject(key)
-                val ifaceStats = InterfaceStats(
-                    id = key,
-                    name = ifaceData.optString("name", key),
-                    active = ifaceData.optBoolean("active", false),
-                    txBytes = ifaceData.optLong("tx_bytes", 0),
-                    rxBytes = ifaceData.optLong("rx_bytes", 0),
-                    txBitrate = ifaceData.optDouble("tx_bitrate", 0.0),
-                    rxBitrate = ifaceData.optDouble("rx_bitrate", 0.0),
-                    rtt = ifaceData.optDouble("rtt_ms", 0.0),
-                    loss = ifaceData.optDouble("loss", 0.0)
-                )
-                stats.interfaces[key] = ifaceStats
+            // Parse channels array from status response
+            val channels = status.optJSONArray("channels")
+            if (channels != null) {
+                for (i in 0 until channels.length()) {
+                    val channel = channels.getJSONObject(i)
+                    val ifaceId = channel.optString("interface", "unknown")
+                    val channelStats = channel.optJSONObject("stats")
+                    val currentStats = channelStats?.optJSONObject("current")
+                    
+                    val ifaceStats = InterfaceStats(
+                        id = ifaceId,
+                        name = channel.optString("name", ifaceId),
+                        active = (channel.optString("status") == "connected"),
+                        txBytes = channel.optLong("totalOutgoing", 0),
+                        rxBytes = channel.optLong("totalIncoming", 0),
+                        txBitrate = 0.0, // Calculate from bytes if needed
+                        rxBitrate = 0.0,
+                        rtt = (channelStats?.optDouble("currentLatency", 0.0) ?: 0.0) / 1000.0, // Convert μs to ms
+                        loss = currentStats?.optDouble("receivedLost", 0.0) ?: 0.0
+                    )
+                    stats.interfaces[ifaceId] = ifaceStats
+                    
+                    // Update overall latency from first connected channel
+                    if (ifaceStats.active && stats.latencyMs == 0.0) {
+                        stats.latencyMs = ifaceStats.rtt
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error parsing stats: ${e.message}")
@@ -394,21 +449,28 @@ class BondixManager(private val context: Context) {
             val serverResult = addServer(serverHost)
             Log.i(TAG, "2. add-server: $serverResult")
             
-            // Step 3: Enable SOCKS5 proxy
-            val proxyResult = enableProxy(port = proxyPort)
-            Log.i(TAG, "3. enable-proxy-server: $proxyResult")
-            
-            // Step 4: Update network interfaces
+            // Step 3: Update network interfaces (before enabling proxy)
             val ifaceResult = updateInterfacesFromRegistry()
-            Log.i(TAG, "4. update-interfaces: $ifaceResult")
+            Log.i(TAG, "3. update-interfaces: $ifaceResult")
             
-            // Step 5: Set bonding preset
-            val presetResult = setPreset("bonding")
-            Log.i(TAG, "5. set-preset: $presetResult")
+            // Step 4: Skip set-preset - Android SDK doesn't support it
+            // val presetResult = setPreset("bonding")
+            Log.i(TAG, "4. set-preset: SKIPPED (not supported on Android SDK)")
             
-            // Step 6: Enable JVM proxy for Java/Kotlin traffic
+            // Step 5: Wait for tunnel to establish before enabling proxy
+            Log.i(TAG, "5. Waiting for tunnel to establish...")
+            Thread.sleep(100)
+            
+            // Step 6: Enable SOCKS5 proxy (AFTER tunnel is configured)
+            val proxyResult = enableProxy(port = proxyPort)
+            Log.i(TAG, "6. enable-proxy-server: $proxyResult")
+            
+            // Step 7: Wait a bit more for proxy to start listening
+            Thread.sleep(5000)
+            
+            // Step 8: Enable JVM proxy for Java/Kotlin traffic
             enableJvmProxy()
-            Log.i(TAG, "6. JVM proxy enabled: $DEFAULT_PROXY_HOST:$proxyPort")
+            Log.i(TAG, "8. JVM proxy enabled: $DEFAULT_PROXY_HOST:$proxyPort")
             
             Log.i(TAG, "--- Bondix Configuration Complete ---")
             

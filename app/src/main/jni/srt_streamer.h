@@ -55,6 +55,7 @@ struct StreamConfig {
     EncoderPreset preset = EncoderPreset::ULTRAFAST;  // x264 speed preset
     int keyframeInterval = 2;    // Keyframe every N seconds (GOP size = frameRate * keyframeInterval)
     int bFrames = 0;             // Number of B-frames (0 for low latency)
+    bool useHardwareEncoder = true;  // Use hardware encoder (MediaCodec) if available
     
     // Audio settings
     int audioBitrate = 128000;   // 128 kbps
@@ -91,6 +92,12 @@ struct StreamStats {
     int64_t bandwidth = 0;           // Estimated bandwidth bps
     uint64_t streamTimeMs = 0;       // Stream duration in ms
     SrtConnectionState connectionState = SrtConnectionState::DISCONNECTED;
+    
+    // Frame rate stats
+    double inputFps = 0.0;           // Frames received from camera per second
+    double outputFps = 0.0;          // Frames encoded per second
+    uint64_t framesDropped = 0;      // Total frames dropped (input - output)
+    bool hardwareEncoderActive = false;  // True if using hardware encoder
 };
 
 /**

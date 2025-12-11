@@ -25,6 +25,7 @@ class SettingsRepository(context: Context) {
         
         // Bondix settings
         private const val KEY_BONDIX_ENABLED = "bondix_enabled"
+        private const val KEY_BONDIX_FOR_SRT = "bondix_for_srt"  // Route SRT through Bondix tunnel
         private const val KEY_TUNNEL_NAME = "tunnel_name"
         private const val KEY_TUNNEL_PASSWORD = "tunnel_password"
         private const val KEY_ENDPOINT_SERVER = "endpoint_server"
@@ -38,29 +39,39 @@ class SettingsRepository(context: Context) {
         private const val KEY_ENCODER_PRESET = "encoder_preset"
         private const val KEY_KEYFRAME_INTERVAL = "keyframe_interval"
         private const val KEY_B_FRAMES = "b_frames"
+        private const val KEY_USE_HARDWARE_ENCODER = "use_hardware_encoder"
         
         // Audio settings
         private const val KEY_AUDIO_BITRATE = "audio_bitrate"
         private const val KEY_SAMPLE_RATE = "sample_rate"
         
         // Defaults
+        private const val DEFAULT_SRT_HOST = "gcdemo.mcrbox.com"
         private const val DEFAULT_SRT_PORT = 5000
-        private const val DEFAULT_VIDEO_BITRATE = 4000 // kbps
+        private const val DEFAULT_RESOLUTION = "720p"
+        private const val DEFAULT_VIDEO_BITRATE = 2000 // kbps
         private const val DEFAULT_FRAME_RATE = 30
         private const val DEFAULT_ENCODER_PRESET = 0 // ULTRAFAST
         private const val DEFAULT_KEYFRAME_INTERVAL = 2 // seconds
         private const val DEFAULT_B_FRAMES = 0
         private const val DEFAULT_AUDIO_BITRATE = 128 // kbps
         private const val DEFAULT_SAMPLE_RATE = 48000
+        
+        // Bondix defaults
+        private const val DEFAULT_BONDIX_ENABLED = true
+        private const val DEFAULT_BONDIX_FOR_SRT = true  // Route SRT through Bondix by default
+        private const val DEFAULT_TUNNEL_NAME = "gcdemo"
+        private const val DEFAULT_TUNNEL_PASSWORD = "_'rY8.*Z1!Jh"
+        private const val DEFAULT_ENDPOINT_SERVER = "gcdemo.mcrbox.com"
     }
 
     private val prefs: SharedPreferences = 
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    // Transport Mode
+    // Transport Mode (default: SRT)
     var transportMode: TransportMode
         get() {
-            val mode = prefs.getString(KEY_TRANSPORT_MODE, "udp") ?: "udp"
+            val mode = prefs.getString(KEY_TRANSPORT_MODE, "srt") ?: "srt"
             return if (mode == "srt") TransportMode.SRT else TransportMode.UDP
         }
         set(value) {
@@ -70,7 +81,7 @@ class SettingsRepository(context: Context) {
 
     // Target Settings (used for both UDP and SRT)
     var srtHost: String
-        get() = prefs.getString(KEY_SRT_HOST, "") ?: ""
+        get() = prefs.getString(KEY_SRT_HOST, DEFAULT_SRT_HOST) ?: DEFAULT_SRT_HOST
         set(value) = prefs.edit().putString(KEY_SRT_HOST, value).apply()
 
     var srtPort: Int
@@ -87,24 +98,28 @@ class SettingsRepository(context: Context) {
 
     // Bondix Settings
     var bondixEnabled: Boolean
-        get() = prefs.getBoolean(KEY_BONDIX_ENABLED, true)
+        get() = prefs.getBoolean(KEY_BONDIX_ENABLED, DEFAULT_BONDIX_ENABLED)
         set(value) = prefs.edit().putBoolean(KEY_BONDIX_ENABLED, value).apply()
 
+    var bondixForSrt: Boolean
+        get() = prefs.getBoolean(KEY_BONDIX_FOR_SRT, DEFAULT_BONDIX_FOR_SRT)
+        set(value) = prefs.edit().putBoolean(KEY_BONDIX_FOR_SRT, value).apply()
+
     var tunnelName: String
-        get() = prefs.getString(KEY_TUNNEL_NAME, "") ?: ""
+        get() = prefs.getString(KEY_TUNNEL_NAME, DEFAULT_TUNNEL_NAME) ?: DEFAULT_TUNNEL_NAME
         set(value) = prefs.edit().putString(KEY_TUNNEL_NAME, value).apply()
 
     var tunnelPassword: String
-        get() = prefs.getString(KEY_TUNNEL_PASSWORD, "") ?: ""
+        get() = prefs.getString(KEY_TUNNEL_PASSWORD, DEFAULT_TUNNEL_PASSWORD) ?: DEFAULT_TUNNEL_PASSWORD
         set(value) = prefs.edit().putString(KEY_TUNNEL_PASSWORD, value).apply()
 
     var endpointServer: String
-        get() = prefs.getString(KEY_ENDPOINT_SERVER, "") ?: ""
+        get() = prefs.getString(KEY_ENDPOINT_SERVER, DEFAULT_ENDPOINT_SERVER) ?: DEFAULT_ENDPOINT_SERVER
         set(value) = prefs.edit().putString(KEY_ENDPOINT_SERVER, value).apply()
 
     // Video Settings
     var resolution: String
-        get() = prefs.getString(KEY_RESOLUTION, "1080p") ?: "1080p"
+        get() = prefs.getString(KEY_RESOLUTION, DEFAULT_RESOLUTION) ?: DEFAULT_RESOLUTION
         set(value) = prefs.edit().putString(KEY_RESOLUTION, value).apply()
 
     var videoBitrateKbps: Int
@@ -127,6 +142,10 @@ class SettingsRepository(context: Context) {
     var bFrames: Int
         get() = prefs.getInt(KEY_B_FRAMES, DEFAULT_B_FRAMES)
         set(value) = prefs.edit().putInt(KEY_B_FRAMES, value).apply()
+
+    var useHardwareEncoder: Boolean
+        get() = prefs.getBoolean(KEY_USE_HARDWARE_ENCODER, true)  // Default to true
+        set(value) = prefs.edit().putBoolean(KEY_USE_HARDWARE_ENCODER, value).apply()
 
     // Audio Settings
     var audioBitrateKbps: Int
@@ -186,7 +205,8 @@ class SettingsRepository(context: Context) {
             sampleRate = sampleRate,
             encoderPreset = encoderPreset,
             keyframeInterval = keyframeInterval,
-            bFrames = bFrames
+            bFrames = bFrames,
+            useHardwareEncoder = useHardwareEncoder
         )
     }
 
@@ -195,6 +215,14 @@ class SettingsRepository(context: Context) {
      */
     fun clear() {
         prefs.edit().clear().apply()
+    }
+    
+    /**
+     * Restore all settings to defaults.
+     */
+    fun restoreDefaults() {
+        prefs.edit().clear().apply()
+        // After clearing, all getters will return their default values
     }
 }
 

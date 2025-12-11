@@ -50,6 +50,7 @@ class StreamingService : Service() {
         const val EXTRA_ENCODER_PRESET = "encoder_preset"
         const val EXTRA_KEYFRAME_INTERVAL = "keyframe_interval"
         const val EXTRA_B_FRAMES = "b_frames"
+        const val EXTRA_USE_HARDWARE_ENCODER = "use_hardware_encoder"
     }
 
     private val binder = LocalBinder()
@@ -122,7 +123,8 @@ class StreamingService : Service() {
             sampleRate = intent.getIntExtra(EXTRA_SAMPLE_RATE, 48000),
             encoderPreset = preset,
             keyframeInterval = intent.getIntExtra(EXTRA_KEYFRAME_INTERVAL, 2),
-            bFrames = intent.getIntExtra(EXTRA_B_FRAMES, 0)
+            bFrames = intent.getIntExtra(EXTRA_B_FRAMES, 0),
+            useHardwareEncoder = intent.getBooleanExtra(EXTRA_USE_HARDWARE_ENCODER, true)
         )
     }
 
@@ -139,12 +141,19 @@ class StreamingService : Service() {
         
         // Use transport mode from config (which comes from settings)
         val isUdpMode = config.transport == TransportMode.UDP
-        val useBondixRelay = isUdpMode && bondixAvailable
+        val isSrtMode = config.transport == TransportMode.SRT
+        
+        // Check if we should use Bondix relay:
+        // - UDP mode always uses Bondix if available
+        // - SRT mode uses Bondix if bondixForSrt setting is enabled
+        val bondixForSrt = app?.settingsRepository?.bondixForSrt ?: true
+        val useBondixRelay = bondixAvailable && (isUdpMode || (isSrtMode && bondixForSrt))
         
         val protocol = when {
             isUdpMode && bondixAvailable -> "UDP (via Bondix)"
             isUdpMode -> "UDP (direct - Bondix not available)"
-            else -> "SRT"
+            isSrtMode && useBondixRelay -> "SRT (via Bondix)"
+            else -> "SRT (direct)"
         }
         
         Log.i(TAG, "========================================")
@@ -153,12 +162,14 @@ class StreamingService : Service() {
         Log.i(TAG, "Target: ${config.srtHost}:${config.srtPort}")
         Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
         Log.i(TAG, "Bondix: ${if (bondixAvailable) "available" else "not available"}")
+        Log.i(TAG, "Bondix for SRT: ${if (bondixForSrt) "enabled" else "disabled"}")
         Log.i(TAG, "========================================")
         
         if (useBondixRelay) {
-            Log.i(TAG, "Using UDP transport via Bondix bonded tunnel")
+            val transportType = if (isSrtMode) "SRT" else "UDP"
+            Log.i(TAG, "Using $transportType transport via Bondix bonded tunnel")
             
-            // Start UDP relay asynchronously, then continue with streaming
+            // Start relay asynchronously, then continue with streaming
             serviceScope.launch {
                 val actualConfig = setupBondixRelay(config)
                 continueStartStreaming(actualConfig)
@@ -167,7 +178,7 @@ class StreamingService : Service() {
             if (isUdpMode) {
                 Log.w(TAG, "UDP mode selected but Bondix not available - streaming UDP directly")
             } else {
-                Log.i(TAG, "SRT mode selected - streaming with SRT reliability")
+                Log.i(TAG, "SRT mode selected - streaming directly (Bondix bypass)")
             }
             continueStartStreaming(config)
         }
@@ -176,43 +187,42 @@ class StreamingService : Service() {
     private suspend fun setupBondixRelay(config: StreamConfig): StreamConfig {
         return withContext(Dispatchers.IO) {
             try {
-                // Wait for Bondix tunnel to establish
-                // The SOCKS5 proxy only starts after the tunnel connects to the server
-                // This may take several seconds depending on network conditions
-                Log.i(TAG, "Waiting for Bondix tunnel to establish (3 seconds)...")
+                Log.i(TAG, "Setting up Bondix UDP relay for ${config.srtHost}:${config.srtPort}")
+                
+                // Wait a bit for Bondix tunnel to fully establish
                 delay(3000)
                 
-                // Create UDP relay to forward SRT through Bondix SOCKS5
+                // Create the SOCKS5 UDP relay
                 val relay = Socks5UdpRelay(
                     socksHost = BondixManager.DEFAULT_PROXY_HOST,
                     socksPort = BondixManager.DEFAULT_PROXY_PORT,
                     targetHost = config.srtHost,
-                    targetPort = config.srtPort,
-                    localPort = 0 // Auto-assign
+                    targetPort = config.srtPort
                 )
                 
-                if (relay.start()) {
-                    udpRelay = relay
-                    val localPort = relay.getLocalPort()
+                // Start the relay (includes retry logic for SOCKS5 connection)
+                val started = relay.start()
+                
+                if (started) {
+                    val relayPort = relay.getLocalPort()
+                    Log.i(TAG, "Bondix UDP relay started on port $relayPort")
+                    Log.i(TAG, "Traffic will flow: GStreamer -> localhost:$relayPort -> Bondix SOCKS5 -> ${config.srtHost}:${config.srtPort}")
                     
-                    Log.i(TAG, "========================================")
-                    Log.i(TAG, "=== BONDIX UDP RELAY ACTIVE ===")
-                    Log.i(TAG, "Local: 127.0.0.1:$localPort")
-                    Log.i(TAG, "Target: ${config.srtHost}:${config.srtPort}")
-                    Log.i(TAG, "Via: Bondix SOCKS5 tunnel")
-                    Log.i(TAG, "========================================")
+                    // Store relay reference for cleanup
+                    udpRelay = relay
                     
                     // Return modified config pointing to local relay
                     config.copy(
                         srtHost = "127.0.0.1",
-                        srtPort = localPort
+                        srtPort = relayPort,
+                        useProxy = false // Already going through relay
                     )
                 } else {
-                    Log.e(TAG, "Failed to start Bondix UDP relay - streaming directly")
+                    Log.w(TAG, "Failed to start Bondix relay, streaming directly")
                     config
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error setting up Bondix relay: ${e.message}")
+                Log.e(TAG, "Error in setupBondixRelay: ${e.message}")
                 config
             }
         }

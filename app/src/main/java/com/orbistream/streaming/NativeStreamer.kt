@@ -129,7 +129,8 @@ object NativeStreamer {
             config.transport.value,
             config.encoderPreset.value,
             config.keyframeInterval,
-            config.bFrames
+            config.bFrames,
+            config.useHardwareEncoder
         )
     }
 
@@ -206,7 +207,7 @@ object NativeStreamer {
         if (!initialized) return null
         
         val stats = nativeGetStats() ?: return null
-        if (stats.size < 9) return null
+        if (stats.size < 13) return null
         
         return StreamStats(
             currentBitrate = stats[0],
@@ -217,7 +218,11 @@ object NativeStreamer {
             packetsRetransmitted = stats[5].toLong(),
             packetsDropped = stats[6].toLong(),
             bandwidth = stats[7].toLong(),
-            connectionState = SrtConnectionState.fromOrdinal(stats[8].toInt())
+            connectionState = SrtConnectionState.fromOrdinal(stats[8].toInt()),
+            inputFps = stats[9],
+            outputFps = stats[10],
+            framesDropped = stats[11].toLong(),
+            hardwareEncoderActive = stats[12] > 0.5
         )
     }
 
@@ -253,10 +258,11 @@ object NativeStreamer {
         proxyHost: String?,
         proxyPort: Int,
         useProxy: Boolean,
-        transportMode: Int,     // 0 = UDP, 1 = SRT
-        encoderPreset: Int,     // 0 = ultrafast ... 8 = veryslow
-        keyframeInterval: Int,  // Keyframe every N seconds
-        bFrames: Int            // B-frames (0 for low latency)
+        transportMode: Int,       // 0 = UDP, 1 = SRT
+        encoderPreset: Int,       // 0 = ultrafast ... 8 = veryslow
+        keyframeInterval: Int,    // Keyframe every N seconds
+        bFrames: Int,             // B-frames (0 for low latency)
+        useHardwareEncoder: Boolean  // Use hardware encoder if available
     ): Boolean
     private external fun nativeStart(): Boolean
     private external fun nativeStop()
@@ -319,7 +325,8 @@ data class StreamConfig(
     // Encoder settings
     val encoderPreset: EncoderPreset = EncoderPreset.ULTRAFAST,
     val keyframeInterval: Int = 2,  // Keyframe every N seconds
-    val bFrames: Int = 0            // B-frames (0 for low latency)
+    val bFrames: Int = 0,           // B-frames (0 for low latency)
+    val useHardwareEncoder: Boolean = true  // Use hardware encoder if available
 )
 
 /**
@@ -349,7 +356,12 @@ data class StreamStats(
     val packetsRetransmitted: Long = 0,
     val packetsDropped: Long = 0,
     val bandwidth: Long = 0,
-    val connectionState: SrtConnectionState = SrtConnectionState.DISCONNECTED
+    val connectionState: SrtConnectionState = SrtConnectionState.DISCONNECTED,
+    // Frame rate stats
+    val inputFps: Double = 0.0,           // Frames received from camera per second
+    val outputFps: Double = 0.0,          // Frames encoded per second  
+    val framesDropped: Long = 0,          // Total frames dropped (input - output)
+    val hardwareEncoderActive: Boolean = false  // True if using hardware encoder
 ) {
     /**
      * Get bitrate in Mbps.
@@ -370,5 +382,10 @@ data class StreamStats(
      * Get bandwidth in Mbps.
      */
     fun getBandwidthMbps(): Double = bandwidth / 1_000_000.0
+    
+    /**
+     * Check if frames are being dropped due to CPU overload.
+     */
+    fun isDroppingFrames(): Boolean = inputFps > 0 && outputFps < inputFps * 0.9
 }
 

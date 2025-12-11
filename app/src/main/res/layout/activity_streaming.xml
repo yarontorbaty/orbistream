@@ -271,6 +271,22 @@
                 android:textColor="@color/text_secondary"
                 tools:text="Duration: 00:05:32" />
 
+            <TextView
+                android:id="@+id/srtStatsFps"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                tools:text="FPS: 30 / 30" />
+
+            <TextView
+                android:id="@+id/srtStatsEncoder"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                tools:text="Encoder: HW" />
+
         </LinearLayout>
 
         <!-- Bondix Stats Card -->

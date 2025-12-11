@@ -128,6 +128,7 @@ class SettingsActivity : AppCompatActivity() {
 
         // Bondix settings
         binding.switchBondixEnabled.isChecked = settings.bondixEnabled
+        binding.switchBondixForSrt.isChecked = settings.bondixForSrt
         updateBondixSettingsVisibility(settings.bondixEnabled)
         binding.inputTunnelName.setText(settings.tunnelName)
         binding.inputTunnelPassword.setText(settings.tunnelPassword)
@@ -139,6 +140,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.inputFramerate.setText(settings.frameRate.toString(), false)
 
         // Encoder settings
+        binding.switchHardwareEncoder.isChecked = settings.useHardwareEncoder
         binding.inputEncoderPreset.setText(presetToDisplayName(settings.encoderPreset), false)
         binding.inputKeyframeInterval.setText(settings.keyframeInterval.toString(), false)
         binding.inputBFrames.setText(settings.bFrames.toString(), false)
@@ -185,6 +187,16 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnSave.setOnClickListener {
             saveSettings()
         }
+        
+        binding.btnRestoreDefaults.setOnClickListener {
+            restoreDefaults()
+        }
+    }
+    
+    private fun restoreDefaults() {
+        settings.restoreDefaults()
+        loadSettings()  // Reload UI with default values
+        Toast.makeText(this, R.string.defaults_restored, Toast.LENGTH_SHORT).show()
     }
 
     private fun saveSettings() {
@@ -221,6 +233,7 @@ class SettingsActivity : AppCompatActivity() {
 
         // Save Bondix settings
         settings.bondixEnabled = binding.switchBondixEnabled.isChecked
+        settings.bondixForSrt = binding.switchBondixForSrt.isChecked
         settings.tunnelName = binding.inputTunnelName.text.toString().trim()
         settings.tunnelPassword = binding.inputTunnelPassword.text.toString()
         settings.endpointServer = binding.inputEndpointServer.text.toString().trim()
@@ -231,6 +244,7 @@ class SettingsActivity : AppCompatActivity() {
         settings.frameRate = binding.inputFramerate.text.toString().toIntOrNull() ?: 30
 
         // Save encoder settings
+        settings.useHardwareEncoder = binding.switchHardwareEncoder.isChecked
         settings.encoderPreset = displayNameToPreset(binding.inputEncoderPreset.text.toString())
         settings.keyframeInterval = binding.inputKeyframeInterval.text.toString().toIntOrNull() ?: 2
         settings.bFrames = binding.inputBFrames.text.toString().toIntOrNull() ?: 0

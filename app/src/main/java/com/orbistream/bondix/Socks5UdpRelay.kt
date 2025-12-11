@@ -53,6 +53,10 @@ class Socks5UdpRelay(
     private var running = false
     private var relayJob: Job? = null
     
+    // Store client address for return traffic (set when first packet received from GStreamer)
+    @Volatile
+    private var clientAddress: SocketAddress? = null
+    
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /**
@@ -141,6 +145,7 @@ class Socks5UdpRelay(
         relaySocket = null
         controlSocket = null
         relayAddress = null
+        clientAddress = null
     }
 
     private fun establishSocksConnection(): Boolean {
@@ -280,6 +285,12 @@ class Socks5UdpRelay(
                 val packet = DatagramPacket(buffer, buffer.size)
                 local.receive(packet)
                 
+                // Capture client address for return traffic (first packet sets it)
+                if (clientAddress == null) {
+                    clientAddress = packet.socketAddress
+                    Log.i(TAG, "Captured client address: $clientAddress")
+                }
+                
                 // Encapsulate for SOCKS5 UDP
                 val encapsulated = encapsulateUdpPacket(
                     packet.data, 
@@ -294,6 +305,7 @@ class Socks5UdpRelay(
                     relayAddr
                 )
                 relay.send(outPacket)
+                Log.v(TAG, "Sent ${packet.length} bytes to remote (encapsulated: ${encapsulated.size})")
                 
             } catch (e: SocketException) {
                 if (running) Log.e(TAG, "Forward-to-remote socket error: ${e.message}")
@@ -308,16 +320,14 @@ class Socks5UdpRelay(
 
     /**
      * Forward packets from SOCKS5 relay to local socket (decapsulated).
+     * This handles return traffic (SRT ACKs, NAKs, handshake responses, etc.)
      */
     private suspend fun forwardToLocal() = withContext(Dispatchers.IO) {
         val buffer = ByteArray(65536)
         val local = localSocket ?: return@withContext
         val relay = relaySocket ?: return@withContext
         
-        // Remember the client address from local socket
-        var clientAddress: SocketAddress? = null
-        
-        Log.d(TAG, "Starting forward-to-local loop")
+        Log.d(TAG, "Starting forward-to-local loop (waiting for return traffic)")
         
         while (running && !relay.isClosed) {
             try {
@@ -327,9 +337,13 @@ class Socks5UdpRelay(
                 // Decapsulate SOCKS5 UDP header
                 val (data, dataLen) = decapsulateUdpPacket(packet.data, packet.length)
                 
-                if (data != null && clientAddress != null) {
-                    val outPacket = DatagramPacket(data, dataLen, clientAddress)
+                val client = clientAddress
+                if (data != null && client != null) {
+                    val outPacket = DatagramPacket(data, dataLen, client)
                     local.send(outPacket)
+                    Log.v(TAG, "Forwarded ${dataLen} bytes from remote to client")
+                } else if (data != null && client == null) {
+                    Log.w(TAG, "Received return traffic but no client address yet - dropping ${dataLen} bytes")
                 }
                 
             } catch (e: SocketException) {

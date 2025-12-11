@@ -186,14 +186,27 @@ class CameraManager(private val context: Context) {
         val uvRowStride = image.planes[1].rowStride
         
         if (uvPixelStride == 2) {
-            // Already interleaved, just need to copy VU in correct order
-            val uvBuffer = if (image.planes[2].buffer.remaining() > image.planes[1].buffer.remaining()) {
-                image.planes[2].buffer // V plane has more data, use it
-            } else {
-                image.planes[1].buffer
+            // Already interleaved - but we need to ensure VU order for NV21
+            // Android's YUV_420_888 with pixelStride=2 is typically already NV21 (VU)
+            // Use V buffer (planes[2]) as it starts with V byte
+            val vPlane = image.planes[2].buffer
+            vPlane.rewind()
+            vPlane.get(nv21, ySize, vPlane.remaining().coerceAtMost(nv21.size - ySize))
+        } else if (uvPixelStride == 1) {
+            // Planar format - need to interleave V and U for NV21 (VU order)
+            val uPlane = image.planes[1].buffer
+            val vPlane = image.planes[2].buffer
+            uPlane.rewind()
+            vPlane.rewind()
+            
+            var offset = ySize
+            val uvSize = (image.width * image.height) / 4
+            for (i in 0 until uvSize) {
+                if (offset + 1 < nv21.size) {
+                    nv21[offset++] = vPlane.get()  // V first (NV21)
+                    nv21[offset++] = uPlane.get()  // U second
+                }
             }
-            uvBuffer.rewind()
-            uvBuffer.get(nv21, ySize, uvBuffer.remaining().coerceAtMost(nv21.size - ySize))
         } else {
             // Need to interleave U and V
             var offset = ySize
