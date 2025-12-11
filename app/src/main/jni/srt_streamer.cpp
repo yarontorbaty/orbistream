@@ -51,6 +51,8 @@ private:
     GstElement* videoAppSrc = nullptr;
     GstElement* audioAppSrc = nullptr;
     GstElement* srtSink = nullptr;
+    GstElement* udpSink = nullptr;
+    GstElement* muxer = nullptr;
     GMainLoop* mainLoop = nullptr;
     std::thread mainLoopThread;
     bool videoCapsSet = false;
@@ -241,12 +243,23 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     audioAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "audio_src");
     GstElement* videoEnc = gst_bin_get_by_name(GST_BIN(pipeline), "video_enc");
     
-    // Get SRT sink for stats (only if using SRT)
+    // Get sink elements for stats
     if (config.transport == TransportMode::SRT) {
         srtSink = gst_bin_get_by_name(GST_BIN(pipeline), "srt_sink");
         if (srtSink) {
             LOGI("Got SRT sink for stats collection");
         }
+    } else {
+        udpSink = gst_bin_get_by_name(GST_BIN(pipeline), "udp_sink");
+        if (udpSink) {
+            LOGI("Got UDP sink for stats collection");
+        }
+    }
+    
+    // Get muxer for byte counting (works for both SRT and UDP)
+    muxer = gst_bin_get_by_name(GST_BIN(pipeline), "mux");
+    if (muxer) {
+        LOGI("Got muxer for byte counting");
     }
     
     if (!videoAppSrc || !audioAppSrc) {
@@ -484,6 +497,14 @@ void SrtStreamer::Impl::cleanup() {
         gst_object_unref(srtSink);
         srtSink = nullptr;
     }
+    if (udpSink) {
+        gst_object_unref(udpSink);
+        udpSink = nullptr;
+    }
+    if (muxer) {
+        gst_object_unref(muxer);
+        muxer = nullptr;
+    }
     if (pipeline) {
         gst_object_unref(pipeline);
         pipeline = nullptr;
@@ -498,60 +519,74 @@ void SrtStreamer::Impl::cleanup() {
 
 void SrtStreamer::Impl::updateSrtStats() {
 #if GSTREAMER_AVAILABLE
-    if (!srtSink || !streaming) return;
+    if (!streaming) return;
     
-    // Query SRT statistics from the sink
-    // The srtsink element exposes stats via properties
-    GstStructure* srtStats = nullptr;
-    g_object_get(srtSink, "stats", &srtStats, nullptr);
+    std::lock_guard<std::mutex> lock(statsMutex);
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastBitrateTime).count();
     
-    if (srtStats) {
-        std::lock_guard<std::mutex> lock(statsMutex);
+    if (srtSink) {
+        // SRT mode: Query actual statistics from srtsink
+        GstStructure* srtStats = nullptr;
+        g_object_get(srtSink, "stats", &srtStats, nullptr);
         
-        // SRT stats fields (from libsrt)
-        gint64 pktSentTotal = 0;
-        gint64 pktSentLoss = 0;
-        gint64 pktRetrans = 0;
-        gint64 pktSndDrop = 0;
-        gint64 byteSentTotal = 0;
-        gdouble msRTT = 0.0;
-        gint64 mbpsBandwidth = 0;
-        
-        gst_structure_get_int64(srtStats, "packets-sent", &pktSentTotal);
-        gst_structure_get_int64(srtStats, "packets-sent-lost", &pktSentLoss);
-        gst_structure_get_int64(srtStats, "packets-retransmitted", &pktRetrans);
-        gst_structure_get_int64(srtStats, "packets-sent-dropped", &pktSndDrop);
-        gst_structure_get_int64(srtStats, "bytes-sent", &byteSentTotal);
-        gst_structure_get_double(srtStats, "rtt-ms", &msRTT);
-        gst_structure_get_int64(srtStats, "send-rate-mbps", &mbpsBandwidth);
-        
-        stats.packetsLost = static_cast<uint64_t>(pktSentLoss);
-        stats.packetsRetransmitted = static_cast<uint64_t>(pktRetrans);
-        stats.packetsDropped = static_cast<uint64_t>(pktSndDrop);
-        stats.rtt = msRTT;
-        stats.bandwidth = mbpsBandwidth * 1000000;  // Convert to bps
-        
-        // Update bytesSent if we have real SRT data
-        if (byteSentTotal > 0) {
-            stats.bytesSent = static_cast<uint64_t>(byteSentTotal);
+        if (srtStats) {
+            // SRT stats fields (from libsrt)
+            gint64 pktSentTotal = 0;
+            gint64 pktSentLoss = 0;
+            gint64 pktRetrans = 0;
+            gint64 pktSndDrop = 0;
+            gint64 byteSentTotal = 0;
+            gdouble msRTT = 0.0;
+            gint64 mbpsBandwidth = 0;
+            
+            gst_structure_get_int64(srtStats, "packets-sent", &pktSentTotal);
+            gst_structure_get_int64(srtStats, "packets-sent-lost", &pktSentLoss);
+            gst_structure_get_int64(srtStats, "packets-retransmitted", &pktRetrans);
+            gst_structure_get_int64(srtStats, "packets-sent-dropped", &pktSndDrop);
+            gst_structure_get_int64(srtStats, "bytes-sent", &byteSentTotal);
+            gst_structure_get_double(srtStats, "rtt-ms", &msRTT);
+            gst_structure_get_int64(srtStats, "send-rate-mbps", &mbpsBandwidth);
+            
+            stats.packetsLost = static_cast<uint64_t>(pktSentLoss);
+            stats.packetsRetransmitted = static_cast<uint64_t>(pktRetrans);
+            stats.packetsDropped = static_cast<uint64_t>(pktSndDrop);
+            stats.rtt = msRTT;
+            stats.bandwidth = mbpsBandwidth * 1000000;  // Convert to bps
+            
+            // Update bytesSent from SRT
+            if (byteSentTotal > 0) {
+                stats.bytesSent = static_cast<uint64_t>(byteSentTotal);
+            }
+            
+            // Calculate current bitrate based on bytes sent
+            if (elapsed >= 1000 && stats.bytesSent > 0) {
+                int64_t byteDiff = stats.bytesSent - lastBytesSent;
+                stats.currentBitrate = (byteDiff * 8.0 * 1000.0) / elapsed;  // bps
+                lastBytesSent = stats.bytesSent;
+                lastBitrateTime = now;
+            }
+            
+            // Connection state
+            if (byteSentTotal > 0 || pktSentTotal > 0) {
+                stats.connectionState = SrtConnectionState::CONNECTED;
+            }
+            
+            gst_structure_free(srtStats);
         }
+    } else {
+        // UDP mode: Use configured bitrate as estimate (no detailed stats available)
+        // For UDP, we estimate based on the configured video + audio bitrate
+        stats.currentBitrate = currentConfig.videoBitrate + currentConfig.audioBitrate;
+        stats.connectionState = SrtConnectionState::CONNECTED;  // UDP is "connectionless"
+        stats.rtt = 0;  // No RTT for UDP
+        stats.packetsLost = 0;
+        stats.packetsRetransmitted = 0;
+        stats.packetsDropped = 0;
         
-        // Calculate current bitrate based on bytes sent over time
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastBitrateTime).count();
-        if (elapsed >= 1000) {
-            int64_t byteDiff = stats.bytesSent - lastBytesSent;
-            stats.currentBitrate = (byteDiff * 8.0 * 1000.0) / elapsed;  // bps
-            lastBytesSent = stats.bytesSent;
-            lastBitrateTime = now;
-        }
-        
-        // Connection state - if we're getting stats with data, we're connected
-        if (byteSentTotal > 0 || pktSentTotal > 0) {
-            stats.connectionState = SrtConnectionState::CONNECTED;
-        }
-        
-        gst_structure_free(srtStats);
+        // Estimate bytes sent based on time and configured bitrate
+        auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+        stats.bytesSent = (stats.currentBitrate / 8) * totalMs / 1000;
     }
 #endif
 }
@@ -614,15 +649,8 @@ void SrtStreamer::Impl::pushVideoFrame(const uint8_t* data, size_t size,
         LOGE("Failed to push video frame: %d", ret);
     }
     
-    // Update stats
-    {
-        std::lock_guard<std::mutex> lock(statsMutex);
-        stats.bytesSent += size;
-    }
-#else
-    // Stub: just track bytes
-    std::lock_guard<std::mutex> lock(statsMutex);
-    stats.bytesSent += size;
+    // Note: Don't count raw frame bytes here - they're uncompressed.
+    // Actual bytes sent are tracked via sink stats (SRT) or estimated from bitrate.
 #endif
 }
 
@@ -652,14 +680,8 @@ void SrtStreamer::Impl::pushAudioSamples(const uint8_t* data, size_t size,
         LOGE("Failed to push audio samples: %d", ret);
     }
     
-    // Update stats
-    {
-        std::lock_guard<std::mutex> lock(statsMutex);
-        stats.bytesSent += size;
-    }
-#else
-    std::lock_guard<std::mutex> lock(statsMutex);
-    stats.bytesSent += size;
+    // Note: Don't count raw audio bytes here - they're uncompressed PCM.
+    // Actual bytes sent are tracked via sink stats (SRT) or estimated from bitrate.
 #endif
 }
 
