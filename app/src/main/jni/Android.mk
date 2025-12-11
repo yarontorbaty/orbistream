@@ -30,6 +30,7 @@ GSTREAMER_PLUGINS := \
     app \
     audioconvert \
     audioresample \
+    audiorate \
     videoconvertscale \
     videorate \
     typefindfunctions \

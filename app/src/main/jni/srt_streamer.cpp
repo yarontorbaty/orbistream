@@ -101,30 +101,47 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
 
     std::stringstream ss;
     
-    // Video source from app - set initial width/height to configured values
-    // Use do-timestamp=true to let GStreamer assign consistent timestamps based on pipeline clock
-    // This ensures both audio and video use the same time base
+    // Video source from app
+    // - do-timestamp=true: GStreamer assigns timestamps from pipeline clock
+    // - is-live=true: Source provides data in real-time
+    // - format=time: Timestamps are in nanoseconds
     ss << "appsrc name=video_src format=time is-live=true do-timestamp=true "
        << "caps=\"video/x-raw,format=NV21,width=" << config.videoWidth 
        << ",height=" << config.videoHeight << ",framerate=" << config.frameRate << "/1\" ! ";
     
-    // Video processing: convert to I420, scale if needed, encode
-    ss << "videoconvert ! "
+    // Video processing chain:
+    // - identity single-segment=true: Handles timestamp discontinuities gracefully
+    // - videoconvert: Convert NV21 to encoder-compatible format
+    // - videoscale: Scale to target resolution
+    // - x264enc: H.264 encoding with zero-latency tuning
+    // - queue: Buffer to decouple from muxer with generous limits
+    ss << "identity single-segment=true ! "
+       << "videoconvert ! "
        << "videoscale ! video/x-raw,width=" << config.videoWidth << ",height=" << config.videoHeight << " ! "
        << "x264enc tune=zerolatency bitrate=" << (config.videoBitrate / 1000) 
        << " speed-preset=superfast key-int-max=" << (config.frameRate * 2) << " ! "
-       << "h264parse ! queue name=video_queue ! mux. ";
+       << "h264parse ! "
+       << "queue name=video_queue max-size-time=3000000000 max-size-buffers=0 max-size-bytes=0 ! mux. ";
     
-    // Audio source from app - must include layout=interleaved for audioconvert
-    // Use do-timestamp=true to let GStreamer assign consistent timestamps
+    // Audio source from app
+    // - do-timestamp=true: GStreamer assigns timestamps from pipeline clock (same clock as video)
+    // - layout=interleaved: Required for audioconvert
     ss << "appsrc name=audio_src format=time is-live=true do-timestamp=true "
        << "caps=\"audio/x-raw,format=S16LE,layout=interleaved,rate=" << config.sampleRate 
        << ",channels=" << config.audioChannels << "\" ! ";
     
-    // Audio encoding
-    ss << "audioconvert ! "
+    // Audio processing chain:
+    // - identity single-segment=true: Handles timestamp discontinuities
+    // - audiorate: Fills gaps and removes overlaps in audio (fixes discontinuity!)
+    // - audioconvert: Convert to encoder-compatible format
+    // - voaacenc: AAC encoding
+    // - queue: Buffer to decouple from muxer
+    ss << "identity single-segment=true ! "
+       << "audiorate ! "
+       << "audioconvert ! "
        << "voaacenc bitrate=" << config.audioBitrate << " ! "
-       << "aacparse ! queue name=audio_queue ! mux. ";
+       << "aacparse ! "
+       << "queue name=audio_queue max-size-time=3000000000 max-size-buffers=0 max-size-bytes=0 ! mux. ";
     
     // Muxer
     ss << "mpegtsmux name=mux ! ";
