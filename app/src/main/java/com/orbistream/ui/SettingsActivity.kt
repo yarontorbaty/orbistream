@@ -36,9 +36,24 @@ class SettingsActivity : AppCompatActivity() {
         settings = OrbiStreamApp.instance.settingsRepository
         
         setupTransportToggle()
+        setupBondixToggle()
         setupDropdowns()
         loadSettings()
         setupClickListeners()
+    }
+    
+    private fun setupBondixToggle() {
+        binding.switchBondixEnabled.setOnCheckedChangeListener { _, isChecked ->
+            updateBondixSettingsVisibility(isChecked)
+        }
+    }
+    
+    private fun updateBondixSettingsVisibility(enabled: Boolean) {
+        binding.bondixSettingsContainer.visibility = if (enabled) {
+            android.view.View.VISIBLE
+        } else {
+            android.view.View.GONE
+        }
     }
     
     private fun setupTransportToggle() {
@@ -96,6 +111,8 @@ class SettingsActivity : AppCompatActivity() {
         binding.inputPassphrase.setText(settings.passphrase)
 
         // Bondix settings
+        binding.switchBondixEnabled.isChecked = settings.bondixEnabled
+        updateBondixSettingsVisibility(settings.bondixEnabled)
         binding.inputTunnelName.setText(settings.tunnelName)
         binding.inputTunnelPassword.setText(settings.tunnelPassword)
         binding.inputEndpointServer.setText(settings.endpointServer)
@@ -153,6 +170,7 @@ class SettingsActivity : AppCompatActivity() {
         settings.passphrase = binding.inputPassphrase.text.toString()
 
         // Save Bondix settings
+        settings.bondixEnabled = binding.switchBondixEnabled.isChecked
         settings.tunnelName = binding.inputTunnelName.text.toString().trim()
         settings.tunnelPassword = binding.inputTunnelPassword.text.toString()
         settings.endpointServer = binding.inputEndpointServer.text.toString().trim()

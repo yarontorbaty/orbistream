@@ -73,6 +73,34 @@
             android:fontFamily="monospace"
             tools:text="00:05:32" />
 
+        <!-- SRT Connection Status -->
+        <LinearLayout
+            android:id="@+id/srtStatusPill"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_status_card"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:layout_marginEnd="8dp">
+
+            <View
+                android:id="@+id/srtStatusIndicator"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:background="@drawable/status_indicator" />
+
+            <TextView
+                android:id="@+id/srtStatusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="@string/srt_connecting"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
+
         <!-- Bitrate display -->
         <TextView
             android:id="@+id/bitrateDisplay"
@@ -84,6 +112,19 @@
             android:paddingHorizontal="12dp"
             android:paddingVertical="6dp"
             tools:text="4.5 Mbps" />
+
+        <!-- Stats Toggle Button -->
+        <ImageButton
+            android:id="@+id/btnToggleStats"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_status_card"
+            android:src="@android:drawable/ic_menu_info_details"
+            android:scaleType="centerInside"
+            android:padding="8dp"
+            android:contentDescription="@string/stats_label"
+            app:tint="@color/text_secondary" />
 
     </LinearLayout>
 
@@ -157,6 +198,70 @@
                     android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- SRT Stats Card (toggled visibility) -->
+        <LinearLayout
+            android:id="@+id/srtStatsCard"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_status_card"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="8dp"
+            android:visibility="gone"
+            android:layout_marginBottom="6dp"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SRT STATS"
+                android:textSize="8sp"
+                android:textColor="@color/primary"
+                android:letterSpacing="0.1"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:id="@+id/srtStatsBitrate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
+                android:textColor="@color/text_primary"
+                tools:text="↑ 4.2 Mbps" />
+
+            <TextView
+                android:id="@+id/srtStatsBytesSent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                tools:text="Sent: 24.5 MB" />
+
+            <TextView
+                android:id="@+id/srtStatsPacketsLost"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                tools:text="Lost: 0 pkts" />
+
+            <TextView
+                android:id="@+id/srtStatsRtt"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                tools:text="RTT: 45 ms" />
+
+            <TextView
+                android:id="@+id/srtStatsDuration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                tools:text="Duration: 00:05:32" />
 
         </LinearLayout>
 

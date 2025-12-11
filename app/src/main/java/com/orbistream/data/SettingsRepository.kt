@@ -23,6 +23,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_PASSPHRASE = "passphrase"
         
         // Bondix settings
+        private const val KEY_BONDIX_ENABLED = "bondix_enabled"
         private const val KEY_TUNNEL_NAME = "tunnel_name"
         private const val KEY_TUNNEL_PASSWORD = "tunnel_password"
         private const val KEY_ENDPOINT_SERVER = "endpoint_server"
@@ -76,6 +77,10 @@ class SettingsRepository(context: Context) {
         set(value) = prefs.edit().putString(KEY_PASSPHRASE, value).apply()
 
     // Bondix Settings
+    var bondixEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BONDIX_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_BONDIX_ENABLED, value).apply()
+
     var tunnelName: String
         get() = prefs.getString(KEY_TUNNEL_NAME, "") ?: ""
         set(value) = prefs.edit().putString(KEY_TUNNEL_NAME, value).apply()
@@ -116,10 +121,15 @@ class SettingsRepository(context: Context) {
     fun hasSrtSettings(): Boolean = srtHost.isNotBlank()
 
     /**
-     * Check if Bondix settings are configured.
+     * Check if Bondix settings are configured and enabled.
      */
     fun hasBondixSettings(): Boolean = 
-        tunnelName.isNotBlank() && tunnelPassword.isNotBlank() && endpointServer.isNotBlank()
+        bondixEnabled && tunnelName.isNotBlank() && tunnelPassword.isNotBlank() && endpointServer.isNotBlank()
+    
+    /**
+     * Check if Bondix is enabled (regardless of whether configured).
+     */
+    fun isBondixEnabled(): Boolean = bondixEnabled
 
     /**
      * Get resolution as width/height pair.

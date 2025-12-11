@@ -119,6 +119,9 @@ class StreamingActivity : AppCompatActivity() {
         }
     }
 
+    private var statsVisible = false
+    private var srtConnected = false
+
     private fun setupUI() {
         binding.btnStopStream.setOnClickListener {
             stopStreaming()
@@ -126,11 +129,62 @@ class StreamingActivity : AppCompatActivity() {
 
         // Display target
         val settings = OrbiStreamApp.instance.settingsRepository
-        val srtUrl = "srt://${settings.srtHost}:${settings.srtPort}"
-        binding.streamingToText.text = getString(R.string.streaming_to, srtUrl)
+        val protocol = if (settings.transportMode == TransportMode.SRT) "srt" else "udp"
+        val targetUrl = "$protocol://${settings.srtHost}:${settings.srtPort}"
+        binding.streamingToText.text = getString(R.string.streaming_to, targetUrl)
+        
+        // Stats toggle button
+        binding.btnToggleStats.setOnClickListener {
+            statsVisible = !statsVisible
+            updateStatsVisibility()
+        }
         
         // Initial state
         updateLiveIndicator(false)
+        updateSrtStatus(SrtConnectionState.CONNECTING)
+        updateStatsVisibility()
+    }
+    
+    private fun updateStatsVisibility() {
+        binding.srtStatsCard.visibility = if (statsVisible) View.VISIBLE else View.GONE
+        // Update button tint to show active state
+        val tintColor = if (statsVisible) {
+            ContextCompat.getColor(this, R.color.primary)
+        } else {
+            ContextCompat.getColor(this, R.color.text_secondary)
+        }
+        binding.btnToggleStats.setColorFilter(tintColor)
+    }
+    
+    enum class SrtConnectionState {
+        CONNECTING, CONNECTED, DISCONNECTED, RECONNECTING
+    }
+    
+    private fun updateSrtStatus(state: SrtConnectionState) {
+        srtConnected = state == SrtConnectionState.CONNECTED
+        
+        val (text, color) = when (state) {
+            SrtConnectionState.CONNECTING -> Pair(
+                getString(R.string.srt_connecting),
+                ContextCompat.getColor(this, R.color.status_connecting)
+            )
+            SrtConnectionState.CONNECTED -> Pair(
+                getString(R.string.srt_connected),
+                ContextCompat.getColor(this, R.color.status_connected)
+            )
+            SrtConnectionState.DISCONNECTED -> Pair(
+                getString(R.string.srt_disconnected),
+                ContextCompat.getColor(this, R.color.status_disconnected)
+            )
+            SrtConnectionState.RECONNECTING -> Pair(
+                getString(R.string.srt_reconnecting),
+                ContextCompat.getColor(this, R.color.status_connecting)
+            )
+        }
+        
+        binding.srtStatusText.text = text
+        binding.srtStatusText.setTextColor(color)
+        (binding.srtStatusIndicator.background as? GradientDrawable)?.setColor(color)
     }
 
     private fun setupNetworkStatusListener() {
@@ -210,16 +264,23 @@ class StreamingActivity : AppCompatActivity() {
         lifecycleScope.launch {
             service.streamState.collectLatest { state ->
                 when (state) {
+                    StreamState.STARTING -> {
+                        updateLiveIndicator(false)
+                        updateSrtStatus(SrtConnectionState.CONNECTING)
+                    }
                     StreamState.STREAMING -> {
                         updateLiveIndicator(true)
+                        // Note: we'll update to CONNECTED when we get first stats with bytesSent > 0
                     }
                     StreamState.ERROR -> {
                         updateLiveIndicator(false)
+                        updateSrtStatus(SrtConnectionState.DISCONNECTED)
                         Toast.makeText(this@StreamingActivity, 
                             R.string.error_stream_failed, Toast.LENGTH_LONG).show()
                     }
                     StreamState.STOPPED -> {
                         updateLiveIndicator(false)
+                        updateSrtStatus(SrtConnectionState.DISCONNECTED)
                     }
                     else -> {}
                 }
@@ -271,6 +332,29 @@ class StreamingActivity : AppCompatActivity() {
     private fun updateStats(stats: StreamStats) {
         binding.streamTime.text = stats.getFormattedDuration()
         binding.bitrateDisplay.text = String.format("%.1f Mbps", stats.getBitrateMbps())
+        
+        // Update SRT connection status based on stats
+        if (stats.bytesSent > 0) {
+            if (!srtConnected) {
+                updateSrtStatus(SrtConnectionState.CONNECTED)
+            }
+        }
+        
+        // Update SRT stats panel
+        binding.srtStatsBitrate.text = String.format("↑ %.1f Mbps", stats.getBitrateMbps())
+        binding.srtStatsBytesSent.text = getString(R.string.srt_stats_bytes_sent, formatBytes(stats.bytesSent))
+        binding.srtStatsPacketsLost.text = getString(R.string.srt_stats_packets_lost, stats.packetsLost)
+        binding.srtStatsRtt.text = getString(R.string.srt_stats_rtt, stats.rtt)
+        binding.srtStatsDuration.text = "Duration: ${stats.getFormattedDuration()}"
+    }
+    
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes >= 1_000_000_000 -> String.format("%.1f GB", bytes / 1_000_000_000.0)
+            bytes >= 1_000_000 -> String.format("%.1f MB", bytes / 1_000_000.0)
+            bytes >= 1_000 -> String.format("%.1f KB", bytes / 1_000.0)
+            else -> "$bytes B"
+        }
     }
 
     private fun startBondixStatsPolling() {

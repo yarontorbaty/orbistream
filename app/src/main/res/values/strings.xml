@@ -17,6 +17,14 @@
     <string name="streaming_to">Streaming to: %1$s</string>
     <string name="stream_time">%1$s</string>
     <string name="bitrate_display">%1$s Mbps</string>
+    <string name="srt_connecting">Connecting…</string>
+    <string name="srt_connected">Connected</string>
+    <string name="srt_disconnected">Disconnected</string>
+    <string name="srt_reconnecting">Reconnecting…</string>
+    <string name="stats_label">Stats</string>
+    <string name="srt_stats_bytes_sent">Sent: %1$s</string>
+    <string name="srt_stats_packets_lost">Lost: %1$d pkts</string>
+    <string name="srt_stats_rtt">RTT: %1$.0f ms</string>
     
     <!-- Settings Activity -->
     <string name="title_settings">Settings</string>
@@ -26,6 +34,8 @@
     <string name="label_stream_id">Stream ID (optional)</string>
     <string name="label_passphrase">Passphrase (optional)</string>
     <string name="section_bondix">Bondix Configuration</string>
+    <string name="label_bondix_enabled">Enable Bondix Bonding</string>
+    <string name="label_bondix_enabled_desc">Route traffic through bonded network tunnel</string>
     <string name="label_tunnel_name">Tunnel Name</string>
     <string name="label_tunnel_password">Tunnel Password</string>
     <string name="label_endpoint_server">Endpoint Server</string>
