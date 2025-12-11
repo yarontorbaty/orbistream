@@ -12,6 +12,7 @@
     <color name="background_card">#131A24</color>
     <color name="background_elevated">#1A2332</color>
     <color name="surface">#0F1419</color>
+    <color name="surface_dark">#0D1117</color>
     
     <!-- Text colors -->
     <color name="text_primary">#ECEFF4</color>
