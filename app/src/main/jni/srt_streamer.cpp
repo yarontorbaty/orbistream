@@ -1,6 +1,8 @@
 #include "srt_streamer.h"
 #include <android/log.h>
 #include <chrono>
+#include <cstdlib>   // setenv
+#include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -65,6 +67,9 @@ bool SrtStreamer::initGStreamer() {
 #if GSTREAMER_AVAILABLE
     static bool initialized = false;
     if (!initialized) {
+        // Verbose debug for video path to inspect SPS/PPS/IDR behavior
+        setenv("GST_DEBUG", "x264enc:5,h264parse:5,mpegtsmux:4,appsrc:4,queue:3,srtsink:4,udpsink:4", 1);
+        setenv("GST_DEBUG_NO_COLOR", "1", 1);
         gst_init(nullptr, nullptr);
         initialized = true;
         LOGI("GStreamer initialized");
@@ -109,42 +114,30 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
        << "caps=\"video/x-raw,format=NV21,width=" << config.videoWidth 
        << ",height=" << config.videoHeight << ",framerate=" << config.frameRate << "/1\" ! ";
     
-    // Video processing chain:
-    // - identity single-segment=true: Handles timestamp discontinuities gracefully
-    // - videoconvert: Convert NV21 to encoder-compatible format
-    // - videoscale: Scale to target resolution
-    // - x264enc: H.264 encoding with zero-latency tuning
-    // - queue: Buffer to decouple from muxer with generous limits
-    ss << "identity single-segment=true ! "
+    // Video processing chain (matching MCRBox pattern):
+    // - videorate: ensures consistent frame timing (critical for camera input!)
+    // - videoconvert -> videoscale -> caps to target WxH  
+    // - x264enc with zerolatency tune (MCRBox uses this successfully)
+    // - Direct to mux (no h264parse - MCRBox doesn't use it)
+    ss << "videorate drop-only=true skip-to-first=true ! "
        << "videoconvert ! "
        << "videoscale ! video/x-raw,width=" << config.videoWidth << ",height=" << config.videoHeight << " ! "
-       << "x264enc tune=zerolatency bitrate=" << (config.videoBitrate / 1000) 
-       << " speed-preset=superfast key-int-max=" << (config.frameRate * 2) << " ! "
-       << "h264parse ! "
-       << "queue name=video_queue max-size-time=3000000000 max-size-buffers=0 max-size-bytes=0 ! mux. ";
+       << "x264enc name=video_enc tune=zerolatency speed-preset=ultrafast bitrate=" << (config.videoBitrate / 1000)
+       << " key-int-max=" << (config.frameRate * 2)  // GOP = 2 seconds like MCRBox
+       << " threads=2 ! "
+       << "queue name=video_queue max-size-buffers=3 leaky=downstream ! mux. ";
     
-    // Audio source from app
-    // - do-timestamp=true: GStreamer assigns timestamps from pipeline clock (same clock as video)
-    // - layout=interleaved: Required for audioconvert
-    ss << "appsrc name=audio_src format=time is-live=true do-timestamp=true "
-       << "caps=\"audio/x-raw,format=S16LE,layout=interleaved,rate=" << config.sampleRate 
-       << ",channels=" << config.audioChannels << "\" ! ";
+    // TEMPORARILY DISABLED: Audio source causing timestamp issues
+    // TODO: Fix audio timestamp synchronization
+    // ss << "appsrc name=audio_src format=time is-live=true do-timestamp=true "
+    //    << "caps=\"audio/x-raw,format=S16LE,layout=interleaved,rate=" << config.sampleRate 
+    //    << ",channels=" << config.audioChannels << "\" ! ";
+    // ss << "audioconvert ! "
+    //    << "voaacenc bitrate=" << config.audioBitrate << " ! "
+    //    << "aacparse ! queue name=audio_queue max-size-time=3000000000 max-size-buffers=0 max-size-bytes=0 ! mux. ";
     
-    // Audio processing chain:
-    // - identity single-segment=true: Handles timestamp discontinuities
-    // - audiorate: Fills gaps and removes overlaps in audio (fixes discontinuity!)
-    // - audioconvert: Convert to encoder-compatible format
-    // - voaacenc: AAC encoding
-    // - queue: Buffer to decouple from muxer
-    ss << "identity single-segment=true ! "
-       << "audiorate ! "
-       << "audioconvert ! "
-       << "voaacenc bitrate=" << config.audioBitrate << " ! "
-       << "aacparse ! "
-       << "queue name=audio_queue max-size-time=3000000000 max-size-buffers=0 max-size-bytes=0 ! mux. ";
-    
-    // Muxer
-    ss << "mpegtsmux name=mux ! ";
+    // Muxer - alignment=7 aligns to MPEG-TS packet boundaries (like MCRBox)
+    ss << "mpegtsmux name=mux alignment=7 ! ";
     
     // Output sink based on transport mode
     if (config.transport == TransportMode::UDP) {
@@ -211,10 +204,12 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     
     // Get appsrc elements for pushing data
     videoAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "video_src");
-    audioAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "audio_src");
+    // TEMPORARILY DISABLED: audioAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "audio_src");
+    audioAppSrc = nullptr;  // Audio disabled for testing
+    GstElement* videoEnc = gst_bin_get_by_name(GST_BIN(pipeline), "video_enc");
     
-    if (!videoAppSrc || !audioAppSrc) {
-        LOGE("Failed to get appsrc elements");
+    if (!videoAppSrc) {
+        LOGE("Failed to get video appsrc element");
         cleanup();
         return false;
     }
@@ -225,10 +220,88 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
         "format", GST_FORMAT_TIME,
         nullptr);
     
-    g_object_set(audioAppSrc,
-        "stream-type", 0,
-        "format", GST_FORMAT_TIME,
-        nullptr);
+    // TEMPORARILY DISABLED: Audio appsrc config
+    // g_object_set(audioAppSrc,
+    //     "stream-type", 0,
+    //     "format", GST_FORMAT_TIME,
+    //     nullptr);
+
+    // Pad probe on x264enc src to inspect first few buffers (NAL headers, SPS/PPS/IDR presence)
+    if (videoEnc) {
+        GstPad* encSrc = gst_element_get_static_pad(videoEnc, "src");
+        if (encSrc) {
+            gst_pad_add_probe(encSrc, GST_PAD_PROBE_TYPE_BUFFER,
+                [](GstPad*, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
+                    static int logged = 0;
+                    if (logged >= 10) return GST_PAD_PROBE_OK; // keep log noise low
+                    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+                    if (!buf) return GST_PAD_PROBE_OK;
+                    GstMapInfo map;
+                    if (!gst_buffer_map(buf, &map, GST_MAP_READ))
+                        return GST_PAD_PROBE_OK;
+                    
+                    // Scan ENTIRE buffer for NAL types (not just first 64 bytes)
+                    bool hasIDR = false, hasSPS = false, hasPPS = false;
+                    std::vector<int> nalTypes;
+                    for (size_t i = 0; i + 4 < map.size; ++i) {
+                        // Look for start codes
+                        if (map.data[i] == 0x00 && map.data[i+1] == 0x00) {
+                            size_t hdr = 0;
+                            if (map.data[i+2] == 0x01) {
+                                hdr = i + 3;
+                            } else if (map.data[i+2] == 0x00 && i + 4 < map.size && map.data[i+3] == 0x01) {
+                                hdr = i + 4;
+                            }
+                            if (hdr > 0 && hdr < map.size) {
+                                int nt = map.data[hdr] & 0x1F;
+                                // Only add unique types
+                                bool found = false;
+                                for (int t : nalTypes) if (t == nt) { found = true; break; }
+                                if (!found) nalTypes.push_back(nt);
+                                if (nt == 5) hasIDR = true;
+                                if (nt == 7) hasSPS = true;
+                                if (nt == 8) hasPPS = true;
+                            }
+                        }
+                    }
+                    
+                    std::ostringstream nalList;
+                    for (size_t i = 0; i < nalTypes.size(); ++i) {
+                        nalList << nalTypes[i] << (i + 1 == nalTypes.size() ? "" : ",");
+                    }
+                    
+                    LOGI("h264probe buf=%zu nal_types=[%s] IDR=%d SPS=%d PPS=%d", 
+                         map.size, nalList.str().c_str(), hasIDR, hasSPS, hasPPS);
+                    
+                    gst_buffer_unmap(buf, &map);
+                    logged++;
+                    return GST_PAD_PROBE_OK;
+                },
+                nullptr, nullptr);
+            gst_object_unref(encSrc);
+        }
+        gst_object_unref(videoEnc);
+    }
+
+    // Pad probe on video appsrc sink to confirm camera frames enter pipeline
+    if (videoAppSrc) {
+        GstPad* vsrc_sink = gst_element_get_static_pad(videoAppSrc, "src");
+        if (vsrc_sink) {
+            gst_pad_add_probe(vsrc_sink, GST_PAD_PROBE_TYPE_BUFFER,
+                [](GstPad*, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
+                    static int vlogged = 0;
+                    if (vlogged >= 5) return GST_PAD_PROBE_OK;
+                    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+                    if (buf) {
+                        LOGI("video_src incoming buffer size=%zu", (size_t)gst_buffer_get_size(buf));
+                        vlogged++;
+                    }
+                    return GST_PAD_PROBE_OK;
+                },
+                nullptr, nullptr);
+            gst_object_unref(vsrc_sink);
+        }
+    }
     
     LOGI("Pipeline created successfully");
     return true;
