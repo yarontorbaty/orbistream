@@ -256,6 +256,14 @@
                 tools:text="RTT: 45 ms" />
 
             <TextView
+                android:id="@+id/srtStatsDropped"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:textColor="@color/text_secondary"
+                tools:text="Dropped: 0 pkts" />
+
+            <TextView
                 android:id="@+id/srtStatsDuration"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

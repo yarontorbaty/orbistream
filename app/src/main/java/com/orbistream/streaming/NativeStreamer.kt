@@ -126,7 +126,10 @@ object NativeStreamer {
             config.proxyHost,
             config.proxyPort,
             config.useProxy,
-            config.transport.value
+            config.transport.value,
+            config.encoderPreset.value,
+            config.keyframeInterval,
+            config.bFrames
         )
     }
 
@@ -203,14 +206,18 @@ object NativeStreamer {
         if (!initialized) return null
         
         val stats = nativeGetStats() ?: return null
-        if (stats.size < 5) return null
+        if (stats.size < 9) return null
         
         return StreamStats(
             currentBitrate = stats[0],
             bytesSent = stats[1].toLong(),
             packetsLost = stats[2].toLong(),
             rtt = stats[3],
-            streamTimeMs = stats[4].toLong()
+            streamTimeMs = stats[4].toLong(),
+            packetsRetransmitted = stats[5].toLong(),
+            packetsDropped = stats[6].toLong(),
+            bandwidth = stats[7].toLong(),
+            connectionState = SrtConnectionState.fromOrdinal(stats[8].toInt())
         )
     }
 
@@ -246,7 +253,10 @@ object NativeStreamer {
         proxyHost: String?,
         proxyPort: Int,
         useProxy: Boolean,
-        transportMode: Int  // 0 = UDP, 1 = SRT
+        transportMode: Int,     // 0 = UDP, 1 = SRT
+        encoderPreset: Int,     // 0 = ultrafast ... 8 = veryslow
+        keyframeInterval: Int,  // Keyframe every N seconds
+        bFrames: Int            // B-frames (0 for low latency)
     ): Boolean
     private external fun nativeStart(): Boolean
     private external fun nativeStop()
@@ -269,6 +279,26 @@ enum class TransportMode(val value: Int) {
 }
 
 /**
+ * Encoder presets (maps to x264 speed-preset).
+ */
+enum class EncoderPreset(val value: Int) {
+    ULTRAFAST(0),   // Fastest, lowest quality
+    SUPERFAST(1),
+    VERYFAST(2),
+    FASTER(3),
+    FAST(4),
+    MEDIUM(5),      // Default balance
+    SLOW(6),
+    SLOWER(7),
+    VERYSLOW(8);    // Slowest, highest quality
+    
+    companion object {
+        fun fromValue(value: Int): EncoderPreset = 
+            entries.getOrElse(value) { ULTRAFAST }
+    }
+}
+
+/**
  * Streaming configuration.
  */
 data class StreamConfig(
@@ -285,8 +315,27 @@ data class StreamConfig(
     val sampleRate: Int = 48000,
     val proxyHost: String? = "127.0.0.1",
     val proxyPort: Int = 28007,
-    val useProxy: Boolean = true
+    val useProxy: Boolean = true,
+    // Encoder settings
+    val encoderPreset: EncoderPreset = EncoderPreset.ULTRAFAST,
+    val keyframeInterval: Int = 2,  // Keyframe every N seconds
+    val bFrames: Int = 0            // B-frames (0 for low latency)
 )
+
+/**
+ * SRT connection state.
+ */
+enum class SrtConnectionState(val value: Int) {
+    DISCONNECTED(0),
+    CONNECTING(1),
+    CONNECTED(2),
+    BROKEN(3);
+    
+    companion object {
+        fun fromOrdinal(ordinal: Int): SrtConnectionState = 
+            entries.getOrElse(ordinal) { DISCONNECTED }
+    }
+}
 
 /**
  * Streaming statistics.
@@ -296,7 +345,11 @@ data class StreamStats(
     val bytesSent: Long = 0,
     val packetsLost: Long = 0,
     val rtt: Double = 0.0,
-    val streamTimeMs: Long = 0
+    val streamTimeMs: Long = 0,
+    val packetsRetransmitted: Long = 0,
+    val packetsDropped: Long = 0,
+    val bandwidth: Long = 0,
+    val connectionState: SrtConnectionState = SrtConnectionState.DISCONNECTED
 ) {
     /**
      * Get bitrate in Mbps.
@@ -312,5 +365,10 @@ data class StreamStats(
         val hours = streamTimeMs / 3600000
         return String.format("%02d:%02d:%02d", hours, minutes, seconds)
     }
+    
+    /**
+     * Get bandwidth in Mbps.
+     */
+    fun getBandwidthMbps(): Double = bandwidth / 1_000_000.0
 }
 

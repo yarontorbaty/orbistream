@@ -18,6 +18,21 @@ enum class TransportMode {
 };
 
 /**
+ * Encoder presets (maps to x264 speed-preset).
+ */
+enum class EncoderPreset {
+    ULTRAFAST,  // Fastest, lowest quality
+    SUPERFAST,
+    VERYFAST,
+    FASTER,
+    FAST,
+    MEDIUM,     // Default balance
+    SLOW,
+    SLOWER,
+    VERYSLOW    // Slowest, highest quality
+};
+
+/**
  * Configuration for the streaming pipeline.
  */
 struct StreamConfig {
@@ -36,6 +51,11 @@ struct StreamConfig {
     int videoBitrate = 4000000;  // 4 Mbps
     int frameRate = 30;
     
+    // Encoder settings
+    EncoderPreset preset = EncoderPreset::ULTRAFAST;  // x264 speed preset
+    int keyframeInterval = 2;    // Keyframe every N seconds (GOP size = frameRate * keyframeInterval)
+    int bFrames = 0;             // Number of B-frames (0 for low latency)
+    
     // Audio settings
     int audioBitrate = 128000;   // 128 kbps
     int sampleRate = 48000;
@@ -48,14 +68,29 @@ struct StreamConfig {
 };
 
 /**
+ * SRT connection state.
+ */
+enum class SrtConnectionState {
+    DISCONNECTED,
+    CONNECTING,
+    CONNECTED,
+    BROKEN
+};
+
+/**
  * Streaming statistics.
  */
 struct StreamStats {
     double currentBitrate = 0.0;     // Current bitrate in bps
     uint64_t bytesSent = 0;          // Total bytes sent
     uint64_t packetsLost = 0;        // Packets lost (SRT stat)
+    uint64_t packetsRetransmitted = 0; // Packets retransmitted
+    uint64_t packetsDropped = 0;     // Packets dropped
     double rtt = 0.0;                // Round-trip time in ms
+    double rttVariance = 0.0;        // RTT variance in ms
+    int64_t bandwidth = 0;           // Estimated bandwidth bps
     uint64_t streamTimeMs = 0;       // Stream duration in ms
+    SrtConnectionState connectionState = SrtConnectionState::DISCONNECTED;
 };
 
 /**

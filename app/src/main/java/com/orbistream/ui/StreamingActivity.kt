@@ -25,6 +25,7 @@ import com.orbistream.bondix.BondixStats
 import com.orbistream.bondix.NetworkRegistry
 import com.orbistream.databinding.ActivityStreamingBinding
 import com.orbistream.streaming.*
+import com.orbistream.streaming.SrtConnectionState as NativeSrtConnectionState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 
@@ -235,6 +236,7 @@ class StreamingActivity : AppCompatActivity() {
         Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
         Log.i(TAG, "Video: ${config.videoWidth}x${config.videoHeight} @ ${config.frameRate}fps")
         Log.i(TAG, "Video bitrate: ${config.videoBitrate / 1000} kbps")
+        Log.i(TAG, "Encoder: preset=${config.encoderPreset}, keyframe=${config.keyframeInterval}s, bframes=${config.bFrames}")
         Log.i(TAG, "Audio: ${config.sampleRate}Hz @ ${config.audioBitrate / 1000} kbps")
         Log.i(TAG, "========================================")
         
@@ -251,6 +253,9 @@ class StreamingActivity : AppCompatActivity() {
             putExtra(StreamingService.EXTRA_FRAME_RATE, config.frameRate)
             putExtra(StreamingService.EXTRA_AUDIO_BITRATE, config.audioBitrate)
             putExtra(StreamingService.EXTRA_SAMPLE_RATE, config.sampleRate)
+            putExtra(StreamingService.EXTRA_ENCODER_PRESET, config.encoderPreset.value)
+            putExtra(StreamingService.EXTRA_KEYFRAME_INTERVAL, config.keyframeInterval)
+            putExtra(StreamingService.EXTRA_B_FRAMES, config.bFrames)
         }
         
         startForegroundService(intent)
@@ -333,18 +338,21 @@ class StreamingActivity : AppCompatActivity() {
         binding.streamTime.text = stats.getFormattedDuration()
         binding.bitrateDisplay.text = String.format("%.1f Mbps", stats.getBitrateMbps())
         
-        // Update SRT connection status based on stats
-        if (stats.bytesSent > 0) {
-            if (!srtConnected) {
-                updateSrtStatus(SrtConnectionState.CONNECTED)
-            }
+        // Update SRT connection status based on real connection state
+        val uiState = when (stats.connectionState) {
+            NativeSrtConnectionState.DISCONNECTED -> SrtConnectionState.DISCONNECTED
+            NativeSrtConnectionState.CONNECTING -> SrtConnectionState.CONNECTING
+            NativeSrtConnectionState.CONNECTED -> SrtConnectionState.CONNECTED
+            NativeSrtConnectionState.BROKEN -> SrtConnectionState.RECONNECTING
         }
+        updateSrtStatus(uiState)
         
-        // Update SRT stats panel
+        // Update SRT stats panel with extended stats
         binding.srtStatsBitrate.text = String.format("↑ %.1f Mbps", stats.getBitrateMbps())
         binding.srtStatsBytesSent.text = getString(R.string.srt_stats_bytes_sent, formatBytes(stats.bytesSent))
-        binding.srtStatsPacketsLost.text = getString(R.string.srt_stats_packets_lost, stats.packetsLost)
-        binding.srtStatsRtt.text = getString(R.string.srt_stats_rtt, stats.rtt)
+        binding.srtStatsPacketsLost.text = "Lost: ${stats.packetsLost} • Retrans: ${stats.packetsRetransmitted}"
+        binding.srtStatsRtt.text = String.format("RTT: %.0f ms", stats.rtt)
+        binding.srtStatsDropped.text = "Dropped: ${stats.packetsDropped} pkts"
         binding.srtStatsDuration.text = "Duration: ${stats.getFormattedDuration()}"
     }
     

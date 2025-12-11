@@ -170,7 +170,8 @@ Java_com_orbistream_streaming_NativeStreamer_nativeCreatePipeline(
         jint videoWidth, jint videoHeight, jint videoBitrate, jint frameRate,
         jint audioBitrate, jint sampleRate,
         jstring proxyHost, jint proxyPort, jboolean useProxy,
-        jint transportMode) {
+        jint transportMode,
+        jint encoderPreset, jint keyframeInterval, jint bFrames) {
     
     if (!g_streamer) {
         LOGE("Streamer not initialized");
@@ -208,6 +209,11 @@ Java_com_orbistream_streaming_NativeStreamer_nativeCreatePipeline(
     config.audioBitrate = audioBitrate;
     config.sampleRate = sampleRate;
     
+    // Encoder settings
+    config.preset = static_cast<EncoderPreset>(encoderPreset);
+    config.keyframeInterval = keyframeInterval;
+    config.bFrames = bFrames;
+    
     if (proxyHost) {
         const char* pHost = env->GetStringUTFChars(proxyHost, nullptr);
         config.proxyHost = pHost;
@@ -217,9 +223,10 @@ Java_com_orbistream_streaming_NativeStreamer_nativeCreatePipeline(
     config.useProxy = useProxy;
     
     const char* transportStr = (config.transport == TransportMode::UDP) ? "UDP" : "SRT";
-    LOGI("Creating pipeline [%s]: %s:%d, video %dx%d@%d, bitrate %d",
+    LOGI("Creating pipeline [%s]: %s:%d, video %dx%d@%d, bitrate %d, preset=%d, keyframe=%d, bframes=%d",
          transportStr, config.srtHost.c_str(), config.srtPort,
-         config.videoWidth, config.videoHeight, config.frameRate, config.videoBitrate);
+         config.videoWidth, config.videoHeight, config.frameRate, config.videoBitrate,
+         encoderPreset, keyframeInterval, bFrames);
     
     return g_streamer->createPipeline(config) ? JNI_TRUE : JNI_FALSE;
 }
@@ -287,15 +294,22 @@ Java_com_orbistream_streaming_NativeStreamer_nativeGetStats(JNIEnv* env, jclass 
     
     StreamStats stats = g_streamer->getStats();
     
-    jdoubleArray result = env->NewDoubleArray(5);
-    jdouble values[5] = {
+    // Extended stats array:
+    // [0] currentBitrate, [1] bytesSent, [2] packetsLost, [3] rtt, [4] streamTimeMs,
+    // [5] packetsRetransmitted, [6] packetsDropped, [7] bandwidth, [8] connectionState
+    jdoubleArray result = env->NewDoubleArray(9);
+    jdouble values[9] = {
         stats.currentBitrate,
         static_cast<double>(stats.bytesSent),
         static_cast<double>(stats.packetsLost),
         stats.rtt,
-        static_cast<double>(stats.streamTimeMs)
+        static_cast<double>(stats.streamTimeMs),
+        static_cast<double>(stats.packetsRetransmitted),
+        static_cast<double>(stats.packetsDropped),
+        static_cast<double>(stats.bandwidth),
+        static_cast<double>(static_cast<int>(stats.connectionState))
     };
-    env->SetDoubleArrayRegion(result, 0, 5, values);
+    env->SetDoubleArrayRegion(result, 0, 9, values);
     
     return result;
 }

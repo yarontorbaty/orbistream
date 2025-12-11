@@ -43,6 +43,10 @@
     <string name="label_resolution">Resolution</string>
     <string name="label_bitrate">Bitrate (kbps)</string>
     <string name="label_framerate">Frame Rate</string>
+    <string name="section_encoder">Encoder Settings</string>
+    <string name="label_encoder_preset">Encoder Preset</string>
+    <string name="label_keyframe_interval">Keyframe Interval (seconds)</string>
+    <string name="label_b_frames">B-Frames</string>
     <string name="section_audio">Audio Settings</string>
     <string name="label_audio_bitrate">Audio Bitrate (kbps)</string>
     <string name="label_sample_rate">Sample Rate</string>

@@ -2,6 +2,7 @@ package com.orbistream.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.orbistream.streaming.EncoderPreset
 import com.orbistream.streaming.StreamConfig
 import com.orbistream.streaming.TransportMode
 
@@ -33,6 +34,11 @@ class SettingsRepository(context: Context) {
         private const val KEY_VIDEO_BITRATE = "video_bitrate"
         private const val KEY_FRAME_RATE = "frame_rate"
         
+        // Encoder settings
+        private const val KEY_ENCODER_PRESET = "encoder_preset"
+        private const val KEY_KEYFRAME_INTERVAL = "keyframe_interval"
+        private const val KEY_B_FRAMES = "b_frames"
+        
         // Audio settings
         private const val KEY_AUDIO_BITRATE = "audio_bitrate"
         private const val KEY_SAMPLE_RATE = "sample_rate"
@@ -41,6 +47,9 @@ class SettingsRepository(context: Context) {
         private const val DEFAULT_SRT_PORT = 5000
         private const val DEFAULT_VIDEO_BITRATE = 4000 // kbps
         private const val DEFAULT_FRAME_RATE = 30
+        private const val DEFAULT_ENCODER_PRESET = 0 // ULTRAFAST
+        private const val DEFAULT_KEYFRAME_INTERVAL = 2 // seconds
+        private const val DEFAULT_B_FRAMES = 0
         private const val DEFAULT_AUDIO_BITRATE = 128 // kbps
         private const val DEFAULT_SAMPLE_RATE = 48000
     }
@@ -106,6 +115,19 @@ class SettingsRepository(context: Context) {
         get() = prefs.getInt(KEY_FRAME_RATE, DEFAULT_FRAME_RATE)
         set(value) = prefs.edit().putInt(KEY_FRAME_RATE, value).apply()
 
+    // Encoder Settings
+    var encoderPreset: EncoderPreset
+        get() = EncoderPreset.fromValue(prefs.getInt(KEY_ENCODER_PRESET, DEFAULT_ENCODER_PRESET))
+        set(value) = prefs.edit().putInt(KEY_ENCODER_PRESET, value.value).apply()
+
+    var keyframeInterval: Int
+        get() = prefs.getInt(KEY_KEYFRAME_INTERVAL, DEFAULT_KEYFRAME_INTERVAL)
+        set(value) = prefs.edit().putInt(KEY_KEYFRAME_INTERVAL, value).apply()
+
+    var bFrames: Int
+        get() = prefs.getInt(KEY_B_FRAMES, DEFAULT_B_FRAMES)
+        set(value) = prefs.edit().putInt(KEY_B_FRAMES, value).apply()
+
     // Audio Settings
     var audioBitrateKbps: Int
         get() = prefs.getInt(KEY_AUDIO_BITRATE, DEFAULT_AUDIO_BITRATE)
@@ -161,7 +183,10 @@ class SettingsRepository(context: Context) {
             videoBitrate = videoBitrateKbps * 1000,
             frameRate = frameRate,
             audioBitrate = audioBitrateKbps * 1000,
-            sampleRate = sampleRate
+            sampleRate = sampleRate,
+            encoderPreset = encoderPreset,
+            keyframeInterval = keyframeInterval,
+            bFrames = bFrames
         )
     }
 

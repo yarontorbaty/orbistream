@@ -47,6 +47,9 @@ class StreamingService : Service() {
         const val EXTRA_FRAME_RATE = "frame_rate"
         const val EXTRA_AUDIO_BITRATE = "audio_bitrate"
         const val EXTRA_SAMPLE_RATE = "sample_rate"
+        const val EXTRA_ENCODER_PRESET = "encoder_preset"
+        const val EXTRA_KEYFRAME_INTERVAL = "keyframe_interval"
+        const val EXTRA_B_FRAMES = "b_frames"
     }
 
     private val binder = LocalBinder()
@@ -101,6 +104,10 @@ class StreamingService : Service() {
         val transportOrdinal = intent.getIntExtra(EXTRA_TRANSPORT_MODE, 0)
         val transport = if (transportOrdinal == 1) TransportMode.SRT else TransportMode.UDP
         
+        // Get encoder preset
+        val presetOrdinal = intent.getIntExtra(EXTRA_ENCODER_PRESET, 0)
+        val preset = EncoderPreset.fromValue(presetOrdinal)
+        
         return StreamConfig(
             transport = transport,
             srtHost = intent.getStringExtra(EXTRA_SRT_HOST) ?: "localhost",
@@ -112,7 +119,10 @@ class StreamingService : Service() {
             videoBitrate = intent.getIntExtra(EXTRA_VIDEO_BITRATE, 4_000_000),
             frameRate = intent.getIntExtra(EXTRA_FRAME_RATE, 30),
             audioBitrate = intent.getIntExtra(EXTRA_AUDIO_BITRATE, 128_000),
-            sampleRate = intent.getIntExtra(EXTRA_SAMPLE_RATE, 48000)
+            sampleRate = intent.getIntExtra(EXTRA_SAMPLE_RATE, 48000),
+            encoderPreset = preset,
+            keyframeInterval = intent.getIntExtra(EXTRA_KEYFRAME_INTERVAL, 2),
+            bFrames = intent.getIntExtra(EXTRA_B_FRAMES, 0)
         )
     }
 

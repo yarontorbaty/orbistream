@@ -43,11 +43,14 @@ public:
 private:
     void cleanup();
     std::string buildPipelineString(const StreamConfig& config);
+    void updateSrtStats();
+    static const char* presetToString(EncoderPreset preset);
     
 #if GSTREAMER_AVAILABLE
     GstElement* pipeline = nullptr;
     GstElement* videoAppSrc = nullptr;
     GstElement* audioAppSrc = nullptr;
+    GstElement* srtSink = nullptr;
     GMainLoop* mainLoop = nullptr;
     std::thread mainLoopThread;
     bool videoCapsSet = false;
@@ -60,7 +63,25 @@ private:
     mutable std::mutex statsMutex;
     StreamStats stats;
     std::chrono::steady_clock::time_point startTime;
+    int64_t lastBytesSent = 0;
+    std::chrono::steady_clock::time_point lastBitrateTime;
 };
+
+// Helper to convert EncoderPreset to x264 string
+const char* SrtStreamer::Impl::presetToString(EncoderPreset preset) {
+    switch (preset) {
+        case EncoderPreset::ULTRAFAST: return "ultrafast";
+        case EncoderPreset::SUPERFAST: return "superfast";
+        case EncoderPreset::VERYFAST: return "veryfast";
+        case EncoderPreset::FASTER: return "faster";
+        case EncoderPreset::FAST: return "fast";
+        case EncoderPreset::MEDIUM: return "medium";
+        case EncoderPreset::SLOW: return "slow";
+        case EncoderPreset::SLOWER: return "slower";
+        case EncoderPreset::VERYSLOW: return "veryslow";
+        default: return "ultrafast";
+    }
+}
 
 // Static GStreamer initialization
 bool SrtStreamer::initGStreamer() {
@@ -93,11 +114,16 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
 
     const char* transportStr = (config.transport == TransportMode::UDP) ? "UDP" : "SRT";
     
+    const char* presetStr = presetToString(config.preset);
+    int gopSize = config.frameRate * config.keyframeInterval;
+    
     LOGI("=== STREAMING CONFIG ===");
     LOGI("Transport: %s", transportStr);
     LOGI("Target: %s:%d", config.srtHost.c_str(), config.srtPort);
     LOGI("Video: %dx%d @ %d fps, bitrate %d bps", 
          config.videoWidth, config.videoHeight, config.frameRate, config.videoBitrate);
+    LOGI("Encoder: preset=%s, keyframe=%ds (GOP=%d), bframes=%d",
+         presetStr, config.keyframeInterval, gopSize, config.bFrames);
     LOGI("Audio: %d Hz, bitrate %d bps", config.sampleRate, config.audioBitrate);
     if (config.useProxy && config.transport == TransportMode::UDP) {
         LOGI("Bondix: Enabled - reliability handled by tunnel");
@@ -117,13 +143,15 @@ std::string SrtStreamer::Impl::buildPipelineString(const StreamConfig& config) {
     // Video processing chain (matching MCRBox pattern):
     // - videorate: ensures consistent frame timing (critical for camera input!)
     // - videoconvert -> videoscale -> caps to target WxH  
-    // - x264enc with zerolatency tune (MCRBox uses this successfully)
+    // - x264enc with configurable preset and GOP
     // - Direct to mux (no h264parse - MCRBox doesn't use it)
     ss << "videorate drop-only=true skip-to-first=true ! "
        << "videoconvert ! "
        << "videoscale ! video/x-raw,width=" << config.videoWidth << ",height=" << config.videoHeight << " ! "
-       << "x264enc name=video_enc tune=zerolatency speed-preset=ultrafast bitrate=" << (config.videoBitrate / 1000)
-       << " key-int-max=" << (config.frameRate * 2)  // GOP = 2 seconds like MCRBox
+       << "x264enc name=video_enc tune=zerolatency speed-preset=" << presetStr
+       << " bitrate=" << (config.videoBitrate / 1000)
+       << " key-int-max=" << gopSize  // GOP = frameRate * keyframeInterval
+       << " bframes=" << config.bFrames
        << " threads=2 ! "
        << "queue name=video_queue max-size-buffers=3 leaky=downstream ! mux. ";
     
@@ -212,6 +240,14 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     videoAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "video_src");
     audioAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "audio_src");
     GstElement* videoEnc = gst_bin_get_by_name(GST_BIN(pipeline), "video_enc");
+    
+    // Get SRT sink for stats (only if using SRT)
+    if (config.transport == TransportMode::SRT) {
+        srtSink = gst_bin_get_by_name(GST_BIN(pipeline), "srt_sink");
+        if (srtSink) {
+            LOGI("Got SRT sink for stats collection");
+        }
+    }
     
     if (!videoAppSrc || !audioAppSrc) {
         LOGE("Failed to get appsrc elements (video=%p, audio=%p)", videoAppSrc, audioAppSrc);
@@ -355,6 +391,14 @@ bool SrtStreamer::Impl::start() {
     
     streaming = true;
     startTime = std::chrono::steady_clock::now();
+    lastBitrateTime = startTime;
+    lastBytesSent = 0;
+    
+    // Set initial connection state
+    {
+        std::lock_guard<std::mutex> lock(statsMutex);
+        stats.connectionState = SrtConnectionState::CONNECTING;
+    }
     
     // Start main loop in separate thread for bus messages
     mainLoop = g_main_loop_new(nullptr, FALSE);
@@ -436,6 +480,10 @@ void SrtStreamer::Impl::cleanup() {
         gst_object_unref(audioAppSrc);
         audioAppSrc = nullptr;
     }
+    if (srtSink) {
+        gst_object_unref(srtSink);
+        srtSink = nullptr;
+    }
     if (pipeline) {
         gst_object_unref(pipeline);
         pipeline = nullptr;
@@ -448,7 +496,70 @@ void SrtStreamer::Impl::cleanup() {
 #endif
 }
 
+void SrtStreamer::Impl::updateSrtStats() {
+#if GSTREAMER_AVAILABLE
+    if (!srtSink || !streaming) return;
+    
+    // Query SRT statistics from the sink
+    // The srtsink element exposes stats via properties
+    GstStructure* srtStats = nullptr;
+    g_object_get(srtSink, "stats", &srtStats, nullptr);
+    
+    if (srtStats) {
+        std::lock_guard<std::mutex> lock(statsMutex);
+        
+        // SRT stats fields (from libsrt)
+        gint64 pktSentTotal = 0;
+        gint64 pktSentLoss = 0;
+        gint64 pktRetrans = 0;
+        gint64 pktSndDrop = 0;
+        gint64 byteSentTotal = 0;
+        gdouble msRTT = 0.0;
+        gint64 mbpsBandwidth = 0;
+        
+        gst_structure_get_int64(srtStats, "packets-sent", &pktSentTotal);
+        gst_structure_get_int64(srtStats, "packets-sent-lost", &pktSentLoss);
+        gst_structure_get_int64(srtStats, "packets-retransmitted", &pktRetrans);
+        gst_structure_get_int64(srtStats, "packets-sent-dropped", &pktSndDrop);
+        gst_structure_get_int64(srtStats, "bytes-sent", &byteSentTotal);
+        gst_structure_get_double(srtStats, "rtt-ms", &msRTT);
+        gst_structure_get_int64(srtStats, "send-rate-mbps", &mbpsBandwidth);
+        
+        stats.packetsLost = static_cast<uint64_t>(pktSentLoss);
+        stats.packetsRetransmitted = static_cast<uint64_t>(pktRetrans);
+        stats.packetsDropped = static_cast<uint64_t>(pktSndDrop);
+        stats.rtt = msRTT;
+        stats.bandwidth = mbpsBandwidth * 1000000;  // Convert to bps
+        
+        // Update bytesSent if we have real SRT data
+        if (byteSentTotal > 0) {
+            stats.bytesSent = static_cast<uint64_t>(byteSentTotal);
+        }
+        
+        // Calculate current bitrate based on bytes sent over time
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastBitrateTime).count();
+        if (elapsed >= 1000) {
+            int64_t byteDiff = stats.bytesSent - lastBytesSent;
+            stats.currentBitrate = (byteDiff * 8.0 * 1000.0) / elapsed;  // bps
+            lastBytesSent = stats.bytesSent;
+            lastBitrateTime = now;
+        }
+        
+        // Connection state - if we're getting stats with data, we're connected
+        if (byteSentTotal > 0 || pktSentTotal > 0) {
+            stats.connectionState = SrtConnectionState::CONNECTED;
+        }
+        
+        gst_structure_free(srtStats);
+    }
+#endif
+}
+
 StreamStats SrtStreamer::Impl::getStats() const {
+    // Need to call updateSrtStats which modifies state, so cast away const
+    const_cast<SrtStreamer::Impl*>(this)->updateSrtStats();
+    
     std::lock_guard<std::mutex> lock(statsMutex);
     StreamStats currentStats = stats;
     

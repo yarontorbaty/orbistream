@@ -8,6 +8,7 @@ import com.orbistream.OrbiStreamApp
 import com.orbistream.R
 import com.orbistream.databinding.ActivitySettingsBinding
 import com.orbistream.data.SettingsRepository
+import com.orbistream.streaming.EncoderPreset
 import com.orbistream.streaming.TransportMode
 
 /**
@@ -24,6 +25,9 @@ class SettingsActivity : AppCompatActivity() {
 
     private val resolutionOptions = listOf("480p", "720p", "1080p", "1440p", "4K")
     private val frameRateOptions = listOf("24", "25", "30", "50", "60")
+    private val encoderPresetOptions = listOf("Ultrafast", "Superfast", "Veryfast", "Faster", "Fast", "Medium", "Slow", "Slower", "Veryslow")
+    private val keyframeIntervalOptions = listOf("1", "2", "3", "4", "5", "10")
+    private val bFrameOptions = listOf("0", "1", "2", "3", "4")
     private val audioBitrateOptions = listOf("64", "96", "128", "192", "256", "320")
     private val sampleRateOptions = listOf("44100", "48000")
 
@@ -89,6 +93,18 @@ class SettingsActivity : AppCompatActivity() {
         val frameRateAdapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, frameRateOptions)
         binding.inputFramerate.setAdapter(frameRateAdapter)
 
+        // Encoder preset dropdown
+        val presetAdapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, encoderPresetOptions)
+        binding.inputEncoderPreset.setAdapter(presetAdapter)
+
+        // Keyframe interval dropdown
+        val keyframeAdapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, keyframeIntervalOptions)
+        binding.inputKeyframeInterval.setAdapter(keyframeAdapter)
+
+        // B-frames dropdown
+        val bFramesAdapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, bFrameOptions)
+        binding.inputBFrames.setAdapter(bFramesAdapter)
+
         // Audio bitrate dropdown
         val audioBitrateAdapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, audioBitrateOptions)
         binding.inputAudioBitrate.setAdapter(audioBitrateAdapter)
@@ -122,9 +138,43 @@ class SettingsActivity : AppCompatActivity() {
         binding.inputBitrate.setText(settings.videoBitrateKbps.toString())
         binding.inputFramerate.setText(settings.frameRate.toString(), false)
 
+        // Encoder settings
+        binding.inputEncoderPreset.setText(presetToDisplayName(settings.encoderPreset), false)
+        binding.inputKeyframeInterval.setText(settings.keyframeInterval.toString(), false)
+        binding.inputBFrames.setText(settings.bFrames.toString(), false)
+
         // Audio settings
         binding.inputAudioBitrate.setText(settings.audioBitrateKbps.toString(), false)
         binding.inputSampleRate.setText(settings.sampleRate.toString(), false)
+    }
+    
+    private fun presetToDisplayName(preset: EncoderPreset): String {
+        return when (preset) {
+            EncoderPreset.ULTRAFAST -> "Ultrafast"
+            EncoderPreset.SUPERFAST -> "Superfast"
+            EncoderPreset.VERYFAST -> "Veryfast"
+            EncoderPreset.FASTER -> "Faster"
+            EncoderPreset.FAST -> "Fast"
+            EncoderPreset.MEDIUM -> "Medium"
+            EncoderPreset.SLOW -> "Slow"
+            EncoderPreset.SLOWER -> "Slower"
+            EncoderPreset.VERYSLOW -> "Veryslow"
+        }
+    }
+    
+    private fun displayNameToPreset(name: String): EncoderPreset {
+        return when (name.lowercase()) {
+            "ultrafast" -> EncoderPreset.ULTRAFAST
+            "superfast" -> EncoderPreset.SUPERFAST
+            "veryfast" -> EncoderPreset.VERYFAST
+            "faster" -> EncoderPreset.FASTER
+            "fast" -> EncoderPreset.FAST
+            "medium" -> EncoderPreset.MEDIUM
+            "slow" -> EncoderPreset.SLOW
+            "slower" -> EncoderPreset.SLOWER
+            "veryslow" -> EncoderPreset.VERYSLOW
+            else -> EncoderPreset.ULTRAFAST
+        }
     }
 
     private fun setupClickListeners() {
@@ -179,6 +229,11 @@ class SettingsActivity : AppCompatActivity() {
         settings.resolution = binding.inputResolution.text.toString()
         settings.videoBitrateKbps = videoBitrate
         settings.frameRate = binding.inputFramerate.text.toString().toIntOrNull() ?: 30
+
+        // Save encoder settings
+        settings.encoderPreset = displayNameToPreset(binding.inputEncoderPreset.text.toString())
+        settings.keyframeInterval = binding.inputKeyframeInterval.text.toString().toIntOrNull() ?: 2
+        settings.bFrames = binding.inputBFrames.text.toString().toIntOrNull() ?: 0
 
         // Save audio settings
         settings.audioBitrateKbps = binding.inputAudioBitrate.text.toString().toIntOrNull() ?: 128
