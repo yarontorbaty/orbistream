@@ -63,6 +63,20 @@ class SettingsRepository(context: Context) {
         private const val DEFAULT_TUNNEL_NAME = "gcdemo"
         private const val DEFAULT_TUNNEL_PASSWORD = "_'rY8.*Z1!Jh"
         private const val DEFAULT_ENDPOINT_SERVER = "gcdemo.mcrbox.com"
+        
+        // Reconnect settings keys
+        private const val KEY_AUTO_RECONNECT = "auto_reconnect"
+        private const val KEY_INFINITE_RETRIES = "infinite_retries"
+        private const val KEY_MAX_RECONNECT_ATTEMPTS = "max_reconnect_attempts"
+        private const val KEY_USE_EXPONENTIAL_BACKOFF = "use_exponential_backoff"
+        private const val KEY_RECONNECT_DELAY_SEC = "reconnect_delay_sec"
+        
+        // Reconnect defaults
+        private const val DEFAULT_AUTO_RECONNECT = true
+        private const val DEFAULT_INFINITE_RETRIES = true
+        private const val DEFAULT_MAX_RECONNECT_ATTEMPTS = 10
+        private const val DEFAULT_USE_EXPONENTIAL_BACKOFF = false
+        private const val DEFAULT_RECONNECT_DELAY_SEC = 3
     }
 
     private val prefs: SharedPreferences = 
@@ -146,6 +160,27 @@ class SettingsRepository(context: Context) {
     var useHardwareEncoder: Boolean
         get() = prefs.getBoolean(KEY_USE_HARDWARE_ENCODER, true)  // Default to true
         set(value) = prefs.edit().putBoolean(KEY_USE_HARDWARE_ENCODER, value).apply()
+
+    // Reconnect Settings
+    var autoReconnect: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_RECONNECT, DEFAULT_AUTO_RECONNECT)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_RECONNECT, value).apply()
+    
+    var infiniteRetries: Boolean
+        get() = prefs.getBoolean(KEY_INFINITE_RETRIES, DEFAULT_INFINITE_RETRIES)
+        set(value) = prefs.edit().putBoolean(KEY_INFINITE_RETRIES, value).apply()
+    
+    var maxReconnectAttempts: Int
+        get() = prefs.getInt(KEY_MAX_RECONNECT_ATTEMPTS, DEFAULT_MAX_RECONNECT_ATTEMPTS)
+        set(value) = prefs.edit().putInt(KEY_MAX_RECONNECT_ATTEMPTS, value).apply()
+    
+    var useExponentialBackoff: Boolean
+        get() = prefs.getBoolean(KEY_USE_EXPONENTIAL_BACKOFF, DEFAULT_USE_EXPONENTIAL_BACKOFF)
+        set(value) = prefs.edit().putBoolean(KEY_USE_EXPONENTIAL_BACKOFF, value).apply()
+    
+    var reconnectDelaySec: Int
+        get() = prefs.getInt(KEY_RECONNECT_DELAY_SEC, DEFAULT_RECONNECT_DELAY_SEC)
+        set(value) = prefs.edit().putInt(KEY_RECONNECT_DELAY_SEC, value).apply()
 
     // Audio Settings
     var audioBitrateKbps: Int

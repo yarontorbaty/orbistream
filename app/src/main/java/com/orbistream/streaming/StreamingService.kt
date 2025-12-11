@@ -32,6 +32,11 @@ class StreamingService : Service() {
         private const val TAG = "StreamingService"
         private const val CHANNEL_ID = "orbistream_streaming"
         private const val NOTIFICATION_ID = 1001
+        
+        // Auto-reconnect constants
+        private const val MAX_RECONNECT_ATTEMPTS = 10
+        private const val INITIAL_RECONNECT_DELAY_MS = 1000L
+        private const val MAX_RECONNECT_DELAY_MS = 30000L
 
         const val ACTION_START = "com.orbistream.action.START"
         const val ACTION_STOP = "com.orbistream.action.STOP"
@@ -65,6 +70,11 @@ class StreamingService : Service() {
     private var statsJob: Job? = null
     private var currentConfig: StreamConfig? = null
     private var udpRelay: Socks5UdpRelay? = null
+    
+    // Auto-reconnect state
+    private var reconnectAttempts = 0
+    private var isReconnecting = false
+    private var lastConnectionState = SrtConnectionState.DISCONNECTED
 
     inner class LocalBinder : Binder() {
         fun getService(): StreamingService = this@StreamingService
@@ -260,7 +270,16 @@ class StreamingService : Service() {
                 Log.e(TAG, "!!! STREAMING ERROR !!!")
                 Log.e(TAG, "Error: $error")
                 serviceScope.launch {
-                    _streamState.value = StreamState.ERROR
+                    // Check if it's a connection error that we can recover from
+                    if (error.contains("connection", ignoreCase = true) ||
+                        error.contains("timeout", ignoreCase = true) ||
+                        error.contains("broken", ignoreCase = true) ||
+                        error.contains("refused", ignoreCase = true)) {
+                        Log.w(TAG, "Recoverable connection error - attempting reconnect")
+                        triggerReconnect()
+                    } else {
+                        _streamState.value = StreamState.ERROR
+                    }
                 }
             }
         })
@@ -308,8 +327,115 @@ class StreamingService : Service() {
                 NativeStreamer.getStats()?.let { stats ->
                     _streamStats.value = stats
                     updateNotification(stats)
+                    
+                    // Check for connection state changes
+                    checkConnectionState(stats.connectionState)
                 }
                 delay(1000)
+            }
+        }
+    }
+    
+    private fun checkConnectionState(state: SrtConnectionState) {
+        // Detect transition to BROKEN state
+        if (state == SrtConnectionState.BROKEN && lastConnectionState == SrtConnectionState.CONNECTED) {
+            Log.w(TAG, "SRT connection BROKEN - initiating auto-reconnect")
+            triggerReconnect()
+        }
+        
+        // Reset reconnect attempts on successful connection
+        if (state == SrtConnectionState.CONNECTED && lastConnectionState != SrtConnectionState.CONNECTED) {
+            Log.i(TAG, "SRT connection ESTABLISHED")
+            reconnectAttempts = 0
+            isReconnecting = false
+        }
+        
+        lastConnectionState = state
+    }
+    
+    private fun triggerReconnect() {
+        if (isReconnecting) {
+            Log.d(TAG, "Already reconnecting, skipping")
+            return
+        }
+        
+        // Get reconnect settings
+        val app = application as? OrbiStreamApp
+        val settings = app?.settingsRepository
+        val autoReconnect = settings?.autoReconnect ?: true
+        val infiniteRetries = settings?.infiniteRetries ?: true
+        val maxAttempts = settings?.maxReconnectAttempts ?: MAX_RECONNECT_ATTEMPTS
+        val useExponentialBackoff = settings?.useExponentialBackoff ?: false
+        val baseDelaySec = settings?.reconnectDelaySec ?: 3
+        
+        if (!autoReconnect) {
+            Log.i(TAG, "Auto-reconnect disabled, not reconnecting")
+            _streamState.value = StreamState.ERROR
+            return
+        }
+        
+        if (!infiniteRetries && reconnectAttempts >= maxAttempts) {
+            Log.e(TAG, "Max reconnect attempts ($maxAttempts) reached, giving up")
+            _streamState.value = StreamState.ERROR
+            return
+        }
+        
+        isReconnecting = true
+        reconnectAttempts++
+        
+        // Calculate delay
+        val delay = if (useExponentialBackoff) {
+            // Exponential backoff with cap
+            minOf(
+                (baseDelaySec * 1000L) * (1L shl minOf(reconnectAttempts - 1, 5)),
+                MAX_RECONNECT_DELAY_MS
+            )
+        } else {
+            // Fixed delay
+            baseDelaySec * 1000L
+        }
+        
+        val attemptsInfo = if (infiniteRetries) "$reconnectAttempts (infinite)" else "$reconnectAttempts/$maxAttempts"
+        Log.i(TAG, "Reconnect attempt $attemptsInfo in ${delay}ms")
+        _streamState.value = StreamState.RECONNECTING
+        
+        serviceScope.launch {
+            delay(delay)
+            
+            val config = currentConfig
+            if (config == null) {
+                Log.e(TAG, "No config available for reconnect")
+                isReconnecting = false
+                _streamState.value = StreamState.ERROR
+                return@launch
+            }
+            
+            // Stop current stream
+            Log.i(TAG, "Stopping current stream for reconnect...")
+            NativeStreamer.stop()
+            
+            // Wait a bit for cleanup
+            delay(500)
+            
+            // Restart the stream
+            Log.i(TAG, "Restarting stream...")
+            if (NativeStreamer.createPipeline(config)) {
+                if (NativeStreamer.start()) {
+                    Log.i(TAG, "Reconnect successful, stream restarted")
+                    _streamState.value = StreamState.STREAMING
+                    isReconnecting = false
+                    // Don't reset reconnectAttempts here - wait for CONNECTED state
+                } else {
+                    Log.e(TAG, "Failed to start stream on reconnect")
+                    isReconnecting = false
+                    // Try again
+                    triggerReconnect()
+                }
+            } else {
+                Log.e(TAG, "Failed to create pipeline on reconnect")
+                isReconnecting = false
+                // Try again
+                triggerReconnect()
             }
         }
     }
@@ -405,6 +531,7 @@ enum class StreamState {
     STREAMING,
     STOPPING,
     STOPPED,
+    RECONNECTING,
     ERROR
 }
 

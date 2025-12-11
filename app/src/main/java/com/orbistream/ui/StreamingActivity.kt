@@ -278,6 +278,12 @@ class StreamingActivity : AppCompatActivity() {
                         updateLiveIndicator(true)
                         // Note: we'll update to CONNECTED when we get first stats with bytesSent > 0
                     }
+                    StreamState.RECONNECTING -> {
+                        updateLiveIndicator(false)
+                        updateSrtStatus(SrtConnectionState.CONNECTING)
+                        Toast.makeText(this@StreamingActivity, 
+                            R.string.status_reconnecting, Toast.LENGTH_SHORT).show()
+                    }
                     StreamState.ERROR -> {
                         updateLiveIndicator(false)
                         updateSrtStatus(SrtConnectionState.DISCONNECTED)

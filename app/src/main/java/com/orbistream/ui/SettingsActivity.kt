@@ -41,9 +41,19 @@ class SettingsActivity : AppCompatActivity() {
         
         setupTransportToggle()
         setupBondixToggle()
+        setupReconnectToggles()
         setupDropdowns()
         loadSettings()
         setupClickListeners()
+    }
+    
+    private fun setupReconnectToggles() {
+        binding.switchAutoReconnect.setOnCheckedChangeListener { _, isChecked ->
+            updateReconnectOptionsVisibility(isChecked)
+        }
+        binding.switchInfiniteRetries.setOnCheckedChangeListener { _, isChecked ->
+            updateMaxAttemptsVisibility(!isChecked)
+        }
     }
     
     private fun setupBondixToggle() {
@@ -148,6 +158,25 @@ class SettingsActivity : AppCompatActivity() {
         // Audio settings
         binding.inputAudioBitrate.setText(settings.audioBitrateKbps.toString(), false)
         binding.inputSampleRate.setText(settings.sampleRate.toString(), false)
+        
+        // Reconnect settings
+        binding.switchAutoReconnect.isChecked = settings.autoReconnect
+        binding.switchInfiniteRetries.isChecked = settings.infiniteRetries
+        binding.switchExponentialBackoff.isChecked = settings.useExponentialBackoff
+        binding.inputReconnectDelay.setText(settings.reconnectDelaySec.toString())
+        binding.inputMaxAttempts.setText(settings.maxReconnectAttempts.toString())
+        updateReconnectOptionsVisibility(settings.autoReconnect)
+        updateMaxAttemptsVisibility(!settings.infiniteRetries)
+    }
+    
+    private fun updateReconnectOptionsVisibility(autoReconnectEnabled: Boolean) {
+        binding.reconnectOptionsContainer.visibility = 
+            if (autoReconnectEnabled) android.view.View.VISIBLE else android.view.View.GONE
+    }
+    
+    private fun updateMaxAttemptsVisibility(visible: Boolean) {
+        binding.layoutMaxAttempts.visibility = 
+            if (visible) android.view.View.VISIBLE else android.view.View.GONE
     }
     
     private fun presetToDisplayName(preset: EncoderPreset): String {
@@ -252,6 +281,13 @@ class SettingsActivity : AppCompatActivity() {
         // Save audio settings
         settings.audioBitrateKbps = binding.inputAudioBitrate.text.toString().toIntOrNull() ?: 128
         settings.sampleRate = binding.inputSampleRate.text.toString().toIntOrNull() ?: 48000
+        
+        // Save reconnect settings
+        settings.autoReconnect = binding.switchAutoReconnect.isChecked
+        settings.infiniteRetries = binding.switchInfiniteRetries.isChecked
+        settings.useExponentialBackoff = binding.switchExponentialBackoff.isChecked
+        settings.reconnectDelaySec = binding.inputReconnectDelay.text.toString().toIntOrNull() ?: 3
+        settings.maxReconnectAttempts = binding.inputMaxAttempts.text.toString().toIntOrNull() ?: 10
 
         // Update Bondix configuration if settings changed
         if (settings.hasBondixSettings()) {
