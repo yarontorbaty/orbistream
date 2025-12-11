@@ -70,6 +70,9 @@ private:
     int64_t lastBytesSent = 0;
     std::chrono::steady_clock::time_point lastBitrateTime;
     
+    // Byte counting from muxer (fallback when sink stats aren't available)
+    std::atomic<uint64_t> muxerBytesSent{0};
+    
     // Adaptive bitrate
     int currentEncoderBitrate = 0;    // Current encoder bitrate in kbps
     int targetBitrate = 0;            // Target bitrate in kbps
@@ -279,6 +282,23 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     muxer = gst_bin_get_by_name(GST_BIN(pipeline), "mux");
     if (muxer) {
         LOGI("Got muxer for byte counting");
+        
+        // Add pad probe on muxer src to count actual encoded bytes
+        GstPad* muxSrc = gst_element_get_static_pad(muxer, "src");
+        if (muxSrc) {
+            gst_pad_add_probe(muxSrc, GST_PAD_PROBE_TYPE_BUFFER,
+                [](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+                    auto* byteCounter = static_cast<std::atomic<uint64_t>*>(user_data);
+                    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+                    if (buf) {
+                        byteCounter->fetch_add(gst_buffer_get_size(buf), std::memory_order_relaxed);
+                    }
+                    return GST_PAD_PROBE_OK;
+                },
+                &muxerBytesSent, nullptr);
+            gst_object_unref(muxSrc);
+            LOGI("Added muxer byte counting probe");
+        }
     }
     
     if (!videoAppSrc || !audioAppSrc) {
@@ -426,6 +446,7 @@ bool SrtStreamer::Impl::start() {
     lastBitrateTime = startTime;
     lastBitrateAdjustTime = startTime;
     lastBytesSent = 0;
+    muxerBytesSent = 0;
     
     // Set initial connection state
     {
@@ -486,7 +507,8 @@ void SrtStreamer::Impl::stop() {
     
     // Log final stats
     LOGI("=== STREAM ENDED ===");
-    LOGI("Total bytes sent: %llu", (unsigned long long)stats.bytesSent);
+    LOGI("Total bytes sent (SRT): %llu", (unsigned long long)stats.bytesSent);
+    LOGI("Total bytes sent (muxer): %llu", (unsigned long long)muxerBytesSent.load());
     LOGI("Stream duration: %llu ms", (unsigned long long)stats.streamTimeMs);
     
     if (stateCallback) {
@@ -622,23 +644,33 @@ void SrtStreamer::Impl::updateSrtStats() {
             stats.rtt = msRTT;
             stats.bandwidth = mbpsBandwidth * 1000000;  // Convert Mbps to bps
             
-            // Update bytesSent from SRT
+            // Update bytesSent - prefer SRT stats, fallback to muxer count
             if (byteSentTotal > 0) {
                 stats.bytesSent = static_cast<uint64_t>(byteSentTotal);
+            } else {
+                // Fallback to muxer byte counting
+                stats.bytesSent = muxerBytesSent.load(std::memory_order_relaxed);
             }
             
-            // Use SRT's send rate if available, otherwise calculate from bytes
-            if (mbpsSendRate > 0) {
-                stats.currentBitrate = mbpsSendRate * 1000000.0;  // Mbps to bps
-            } else if (elapsed >= 1000 && stats.bytesSent > 0) {
+            // Calculate bitrate from bytes sent over time
+            if (elapsed >= 1000 && stats.bytesSent > 0) {
                 int64_t byteDiff = stats.bytesSent - lastBytesSent;
-                stats.currentBitrate = (byteDiff * 8.0 * 1000.0) / elapsed;  // bps
+                if (byteDiff > 0) {
+                    stats.currentBitrate = (byteDiff * 8.0 * 1000.0) / elapsed;  // bps
+                }
                 lastBytesSent = stats.bytesSent;
                 lastBitrateTime = now;
             }
             
-            // Connection state
-            if (byteSentTotal > 0 || pktSentTotal > 0) {
+            // Use SRT's send rate if available and we haven't calculated yet
+            if (mbpsSendRate > 0 && stats.currentBitrate == 0) {
+                stats.currentBitrate = mbpsSendRate * 1000000.0;  // Mbps to bps
+            }
+            
+            // Connection state - check if bytes are actually flowing
+            if (stats.bytesSent > 0) {
+                stats.connectionState = SrtConnectionState::CONNECTED;
+            } else if (pktSentTotal > 0) {
                 stats.connectionState = SrtConnectionState::CONNECTED;
             }
             
@@ -650,17 +682,29 @@ void SrtStreamer::Impl::updateSrtStats() {
             LOGD("SRT sink has no stats available yet");
         }
     } else {
-        // UDP mode: Use configured bitrate as estimate (no detailed stats available)
-        stats.currentBitrate = currentConfig.videoBitrate + currentConfig.audioBitrate;
+        // UDP mode: Use muxer byte counting for actual transmitted data
+        stats.bytesSent = muxerBytesSent.load(std::memory_order_relaxed);
+        
+        // Calculate bitrate from bytes sent over time
+        if (elapsed >= 1000 && stats.bytesSent > 0) {
+            int64_t byteDiff = stats.bytesSent - lastBytesSent;
+            if (byteDiff > 0) {
+                stats.currentBitrate = (byteDiff * 8.0 * 1000.0) / elapsed;  // bps
+            }
+            lastBytesSent = stats.bytesSent;
+            lastBitrateTime = now;
+        }
+        
+        // If we haven't calculated bitrate yet, use configured value
+        if (stats.currentBitrate == 0) {
+            stats.currentBitrate = currentConfig.videoBitrate + currentConfig.audioBitrate;
+        }
+        
         stats.connectionState = SrtConnectionState::CONNECTED;  // UDP is "connectionless"
         stats.rtt = 0;
         stats.packetsLost = 0;
         stats.packetsRetransmitted = 0;
         stats.packetsDropped = 0;
-        
-        // Estimate bytes sent based on time and configured bitrate
-        auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
-        stats.bytesSent = (stats.currentBitrate / 8) * totalMs / 1000;
     }
 #endif
 }
