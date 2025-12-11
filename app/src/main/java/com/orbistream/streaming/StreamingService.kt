@@ -36,6 +36,7 @@ class StreamingService : Service() {
         const val ACTION_START = "com.orbistream.action.START"
         const val ACTION_STOP = "com.orbistream.action.STOP"
         
+        const val EXTRA_TRANSPORT_MODE = "transport_mode"
         const val EXTRA_SRT_HOST = "srt_host"
         const val EXTRA_SRT_PORT = "srt_port"
         const val EXTRA_STREAM_ID = "stream_id"
@@ -96,7 +97,12 @@ class StreamingService : Service() {
     }
 
     private fun extractConfig(intent: Intent): StreamConfig {
+        // Get transport mode - 0 = UDP, 1 = SRT
+        val transportOrdinal = intent.getIntExtra(EXTRA_TRANSPORT_MODE, 0)
+        val transport = if (transportOrdinal == 1) TransportMode.SRT else TransportMode.UDP
+        
         return StreamConfig(
+            transport = transport,
             srtHost = intent.getStringExtra(EXTRA_SRT_HOST) ?: "localhost",
             srtPort = intent.getIntExtra(EXTRA_SRT_PORT, 9000),
             streamId = intent.getStringExtra(EXTRA_STREAM_ID),

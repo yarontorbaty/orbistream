@@ -171,9 +171,13 @@ class StreamingActivity : AppCompatActivity() {
         val settings = OrbiStreamApp.instance.settingsRepository
         val config = settings.buildStreamConfig()
         
+        val transportName = if (config.transport == TransportMode.SRT) "SRT" else "UDP"
+        val protocol = if (config.transport == TransportMode.SRT) "srt" else "udp"
+        
         Log.i(TAG, "========================================")
         Log.i(TAG, "=== STARTING STREAMING SERVICE ===")
-        Log.i(TAG, "SRT Target: srt://${config.srtHost}:${config.srtPort}")
+        Log.i(TAG, "Transport: $transportName")
+        Log.i(TAG, "Target: $protocol://${config.srtHost}:${config.srtPort}")
         Log.i(TAG, "Stream ID: ${config.streamId ?: "(none)"}")
         Log.i(TAG, "Video: ${config.videoWidth}x${config.videoHeight} @ ${config.frameRate}fps")
         Log.i(TAG, "Video bitrate: ${config.videoBitrate / 1000} kbps")
@@ -182,6 +186,7 @@ class StreamingActivity : AppCompatActivity() {
         
         val intent = Intent(this, StreamingService::class.java).apply {
             action = StreamingService.ACTION_START
+            putExtra(StreamingService.EXTRA_TRANSPORT_MODE, config.transport.ordinal)
             putExtra(StreamingService.EXTRA_SRT_HOST, config.srtHost)
             putExtra(StreamingService.EXTRA_SRT_PORT, config.srtPort)
             putExtra(StreamingService.EXTRA_STREAM_ID, config.streamId)
