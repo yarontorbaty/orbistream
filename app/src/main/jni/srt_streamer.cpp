@@ -44,6 +44,7 @@ private:
     void cleanup();
     std::string buildPipelineString(const StreamConfig& config);
     void updateSrtStats();
+    void updateAdaptiveBitrate();
     static const char* presetToString(EncoderPreset preset);
     
 #if GSTREAMER_AVAILABLE
@@ -53,6 +54,7 @@ private:
     GstElement* srtSink = nullptr;
     GstElement* udpSink = nullptr;
     GstElement* muxer = nullptr;
+    GstElement* videoEncoder = nullptr;
     GMainLoop* mainLoop = nullptr;
     std::thread mainLoopThread;
     bool videoCapsSet = false;
@@ -67,6 +69,13 @@ private:
     std::chrono::steady_clock::time_point startTime;
     int64_t lastBytesSent = 0;
     std::chrono::steady_clock::time_point lastBitrateTime;
+    
+    // Adaptive bitrate
+    int currentEncoderBitrate = 0;    // Current encoder bitrate in kbps
+    int targetBitrate = 0;            // Target bitrate in kbps
+    int minBitrate = 500;             // Minimum bitrate in kbps
+    int maxBitrate = 0;               // Maximum bitrate in kbps (from config)
+    std::chrono::steady_clock::time_point lastBitrateAdjustTime;
 };
 
 // Helper to convert EncoderPreset to x264 string
@@ -241,7 +250,17 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     // Get appsrc elements for pushing data
     videoAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "video_src");
     audioAppSrc = gst_bin_get_by_name(GST_BIN(pipeline), "audio_src");
-    GstElement* videoEnc = gst_bin_get_by_name(GST_BIN(pipeline), "video_enc");
+    
+    // Get video encoder for adaptive bitrate and probes
+    videoEncoder = gst_bin_get_by_name(GST_BIN(pipeline), "video_enc");
+    if (videoEncoder) {
+        LOGI("Got video encoder for adaptive bitrate");
+        // Initialize adaptive bitrate settings
+        currentEncoderBitrate = config.videoBitrate / 1000;  // kbps
+        targetBitrate = currentEncoderBitrate;
+        maxBitrate = currentEncoderBitrate;
+        minBitrate = std::max(500, maxBitrate / 10);  // Min 500kbps or 10% of max
+    }
     
     // Get sink elements for stats
     if (config.transport == TransportMode::SRT) {
@@ -281,8 +300,8 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
         nullptr);
 
     // Pad probe on x264enc src to inspect first few buffers (NAL headers, SPS/PPS/IDR presence)
-    if (videoEnc) {
-        GstPad* encSrc = gst_element_get_static_pad(videoEnc, "src");
+    if (videoEncoder) {
+        GstPad* encSrc = gst_element_get_static_pad(videoEncoder, "src");
         if (encSrc) {
             gst_pad_add_probe(encSrc, GST_PAD_PROBE_TYPE_BUFFER,
                 [](GstPad*, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
@@ -334,7 +353,7 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
                 nullptr, nullptr);
             gst_object_unref(encSrc);
         }
-        gst_object_unref(videoEnc);
+        // Note: videoEncoder is unreffed in cleanup()
     }
 
     // Pad probe on video appsrc sink to confirm camera frames enter pipeline
@@ -405,6 +424,7 @@ bool SrtStreamer::Impl::start() {
     streaming = true;
     startTime = std::chrono::steady_clock::now();
     lastBitrateTime = startTime;
+    lastBitrateAdjustTime = startTime;
     lastBytesSent = 0;
     
     // Set initial connection state
@@ -505,6 +525,10 @@ void SrtStreamer::Impl::cleanup() {
         gst_object_unref(muxer);
         muxer = nullptr;
     }
+    if (videoEncoder) {
+        gst_object_unref(videoEncoder);
+        videoEncoder = nullptr;
+    }
     if (pipeline) {
         gst_object_unref(pipeline);
         pipeline = nullptr;
@@ -531,36 +555,82 @@ void SrtStreamer::Impl::updateSrtStats() {
         g_object_get(srtSink, "stats", &srtStats, nullptr);
         
         if (srtStats) {
-            // SRT stats fields (from libsrt)
+            // Log structure fields once for debugging
+            static bool loggedFields = false;
+            if (!loggedFields) {
+                gchar* str = gst_structure_to_string(srtStats);
+                LOGI("SRT stats structure: %s", str);
+                g_free(str);
+                loggedFields = true;
+            }
+            
+            // Try multiple field name formats (SRT stats vary by version)
+            gint64 byteSentTotal = 0;
             gint64 pktSentTotal = 0;
             gint64 pktSentLoss = 0;
             gint64 pktRetrans = 0;
             gint64 pktSndDrop = 0;
-            gint64 byteSentTotal = 0;
             gdouble msRTT = 0.0;
+            gint64 mbpsSendRate = 0;
             gint64 mbpsBandwidth = 0;
             
-            gst_structure_get_int64(srtStats, "packets-sent", &pktSentTotal);
-            gst_structure_get_int64(srtStats, "packets-sent-lost", &pktSentLoss);
-            gst_structure_get_int64(srtStats, "packets-retransmitted", &pktRetrans);
-            gst_structure_get_int64(srtStats, "packets-sent-dropped", &pktSndDrop);
-            gst_structure_get_int64(srtStats, "bytes-sent", &byteSentTotal);
-            gst_structure_get_double(srtStats, "rtt-ms", &msRTT);
-            gst_structure_get_int64(srtStats, "send-rate-mbps", &mbpsBandwidth);
+            // Bytes sent - try various field names
+            if (!gst_structure_get_int64(srtStats, "bytes-sent-total", &byteSentTotal)) {
+                if (!gst_structure_get_int64(srtStats, "bytes-sent", &byteSentTotal)) {
+                    gst_structure_get_int64(srtStats, "bytesSentTotal", &byteSentTotal);
+                }
+            }
+            
+            // Packets sent
+            if (!gst_structure_get_int64(srtStats, "packets-sent", &pktSentTotal)) {
+                gst_structure_get_int64(srtStats, "pktSent", &pktSentTotal);
+            }
+            
+            // Packets lost
+            if (!gst_structure_get_int64(srtStats, "packets-sent-lost", &pktSentLoss)) {
+                gst_structure_get_int64(srtStats, "pktSndLoss", &pktSentLoss);
+            }
+            
+            // Retransmits
+            if (!gst_structure_get_int64(srtStats, "packets-retransmitted", &pktRetrans)) {
+                gst_structure_get_int64(srtStats, "pktRetrans", &pktRetrans);
+            }
+            
+            // Dropped
+            if (!gst_structure_get_int64(srtStats, "packets-sent-dropped", &pktSndDrop)) {
+                gst_structure_get_int64(srtStats, "pktSndDrop", &pktSndDrop);
+            }
+            
+            // RTT
+            if (!gst_structure_get_double(srtStats, "rtt-ms", &msRTT)) {
+                gst_structure_get_double(srtStats, "msRTT", &msRTT);
+            }
+            
+            // Send rate (actual current sending rate)
+            if (!gst_structure_get_int64(srtStats, "send-rate-mbps", &mbpsSendRate)) {
+                gst_structure_get_int64(srtStats, "mbpsSendRate", &mbpsSendRate);
+            }
+            
+            // Bandwidth estimate (SRT's estimate of available bandwidth)
+            if (!gst_structure_get_int64(srtStats, "bandwidth-mbps", &mbpsBandwidth)) {
+                gst_structure_get_int64(srtStats, "mbpsBandwidth", &mbpsBandwidth);
+            }
             
             stats.packetsLost = static_cast<uint64_t>(pktSentLoss);
             stats.packetsRetransmitted = static_cast<uint64_t>(pktRetrans);
             stats.packetsDropped = static_cast<uint64_t>(pktSndDrop);
             stats.rtt = msRTT;
-            stats.bandwidth = mbpsBandwidth * 1000000;  // Convert to bps
+            stats.bandwidth = mbpsBandwidth * 1000000;  // Convert Mbps to bps
             
             // Update bytesSent from SRT
             if (byteSentTotal > 0) {
                 stats.bytesSent = static_cast<uint64_t>(byteSentTotal);
             }
             
-            // Calculate current bitrate based on bytes sent
-            if (elapsed >= 1000 && stats.bytesSent > 0) {
+            // Use SRT's send rate if available, otherwise calculate from bytes
+            if (mbpsSendRate > 0) {
+                stats.currentBitrate = mbpsSendRate * 1000000.0;  // Mbps to bps
+            } else if (elapsed >= 1000 && stats.bytesSent > 0) {
                 int64_t byteDiff = stats.bytesSent - lastBytesSent;
                 stats.currentBitrate = (byteDiff * 8.0 * 1000.0) / elapsed;  // bps
                 lastBytesSent = stats.bytesSent;
@@ -573,13 +643,17 @@ void SrtStreamer::Impl::updateSrtStats() {
             }
             
             gst_structure_free(srtStats);
+            
+            // Run adaptive bitrate adjustment
+            updateAdaptiveBitrate();
+        } else {
+            LOGD("SRT sink has no stats available yet");
         }
     } else {
         // UDP mode: Use configured bitrate as estimate (no detailed stats available)
-        // For UDP, we estimate based on the configured video + audio bitrate
         stats.currentBitrate = currentConfig.videoBitrate + currentConfig.audioBitrate;
         stats.connectionState = SrtConnectionState::CONNECTED;  // UDP is "connectionless"
-        stats.rtt = 0;  // No RTT for UDP
+        stats.rtt = 0;
         stats.packetsLost = 0;
         stats.packetsRetransmitted = 0;
         stats.packetsDropped = 0;
@@ -587,6 +661,78 @@ void SrtStreamer::Impl::updateSrtStats() {
         // Estimate bytes sent based on time and configured bitrate
         auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
         stats.bytesSent = (stats.currentBitrate / 8) * totalMs / 1000;
+    }
+#endif
+}
+
+void SrtStreamer::Impl::updateAdaptiveBitrate() {
+#if GSTREAMER_AVAILABLE
+    if (!videoEncoder || !streaming) return;
+    
+    auto now = std::chrono::steady_clock::now();
+    auto timeSinceLastAdjust = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - lastBitrateAdjustTime).count();
+    
+    // Only adjust every 2 seconds to avoid oscillation
+    if (timeSinceLastAdjust < 2000) return;
+    
+    // Get current stats (already locked by caller)
+    double lossRate = 0.0;
+    if (stats.bytesSent > 0) {
+        // Calculate loss rate as percentage
+        // Using packets sent estimate (bytes / 1316 typical SRT packet size)
+        uint64_t estPacketsSent = stats.bytesSent / 1316;
+        if (estPacketsSent > 0) {
+            lossRate = (stats.packetsLost * 100.0) / (estPacketsSent + stats.packetsLost);
+        }
+    }
+    
+    // Adaptive bitrate logic:
+    // 1. High loss (>5%) or high RTT (>500ms) -> reduce bitrate aggressively
+    // 2. Moderate loss (1-5%) -> reduce bitrate slowly
+    // 3. Low loss (<1%) and low RTT -> increase bitrate slowly toward max
+    
+    int newBitrate = currentEncoderBitrate;
+    
+    if (lossRate > 5.0 || stats.rtt > 500.0) {
+        // Aggressive reduction: drop by 30%
+        newBitrate = currentEncoderBitrate * 70 / 100;
+        LOGI("ABR: High loss/RTT (loss=%.1f%%, rtt=%.0fms) -> reduce to %d kbps", 
+             lossRate, stats.rtt, newBitrate);
+    } else if (lossRate > 1.0 || stats.rtt > 200.0) {
+        // Slow reduction: drop by 10%
+        newBitrate = currentEncoderBitrate * 90 / 100;
+        LOGI("ABR: Moderate loss/RTT (loss=%.1f%%, rtt=%.0fms) -> reduce to %d kbps", 
+             lossRate, stats.rtt, newBitrate);
+    } else if (lossRate < 0.5 && stats.rtt < 100.0 && currentEncoderBitrate < maxBitrate) {
+        // Network is good, increase by 10% toward max
+        newBitrate = std::min(maxBitrate, currentEncoderBitrate * 110 / 100);
+        LOGI("ABR: Good conditions (loss=%.1f%%, rtt=%.0fms) -> increase to %d kbps", 
+             lossRate, stats.rtt, newBitrate);
+    }
+    
+    // Also consider SRT's bandwidth estimate if available
+    if (stats.bandwidth > 0) {
+        int bwBitrate = static_cast<int>(stats.bandwidth / 1000);  // bps to kbps
+        // Use 80% of estimated bandwidth as ceiling
+        int bwCeiling = bwBitrate * 80 / 100;
+        if (bwCeiling < newBitrate) {
+            newBitrate = bwCeiling;
+            LOGI("ABR: Bandwidth limited to %d kbps (SRT estimate: %d kbps)", 
+                 newBitrate, bwBitrate);
+        }
+    }
+    
+    // Clamp to min/max
+    newBitrate = std::max(minBitrate, std::min(maxBitrate, newBitrate));
+    
+    // Only apply if change is significant (>5%)
+    int diff = abs(newBitrate - currentEncoderBitrate);
+    if (diff > currentEncoderBitrate / 20) {
+        LOGI("ABR: Adjusting bitrate: %d -> %d kbps", currentEncoderBitrate, newBitrate);
+        g_object_set(videoEncoder, "bitrate", newBitrate, nullptr);
+        currentEncoderBitrate = newBitrate;
+        lastBitrateAdjustTime = now;
     }
 #endif
 }
