@@ -1,9 +1,7 @@
 LOCAL_PATH := $(call my-dir)
 
-# Path to GStreamer Android SDK
-ifndef GSTREAMER_ROOT_ANDROID
-    GSTREAMER_ROOT_ANDROID := $(LOCAL_PATH)/../../../../gstreamer-android
-endif
+# Path to GStreamer Android SDK (use local copy in project)
+GSTREAMER_ROOT_ANDROID := $(LOCAL_PATH)/../../../../gstreamer-android
 
 # Select architecture-specific path
 ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
@@ -31,7 +29,8 @@ GSTREAMER_PLUGINS := \
     audioconvert \
     audioresample \
     audiorate \
-    videoconvertscale \
+    videoconvert \
+    videoscale \
     videorate \
     typefindfunctions \
     x264 \
