@@ -281,24 +281,9 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
     // Get muxer for byte counting (works for both SRT and UDP)
     muxer = gst_bin_get_by_name(GST_BIN(pipeline), "mux");
     if (muxer) {
-        LOGI("Got muxer for byte counting");
-        
-        // Add pad probe on muxer src to count actual encoded bytes
-        GstPad* muxSrc = gst_element_get_static_pad(muxer, "src");
-        if (muxSrc) {
-            gst_pad_add_probe(muxSrc, GST_PAD_PROBE_TYPE_BUFFER,
-                [](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
-                    auto* byteCounter = static_cast<std::atomic<uint64_t>*>(user_data);
-                    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
-                    if (buf) {
-                        byteCounter->fetch_add(gst_buffer_get_size(buf), std::memory_order_relaxed);
-                    }
-                    return GST_PAD_PROBE_OK;
-                },
-                &muxerBytesSent, nullptr);
-            gst_object_unref(muxSrc);
-            LOGI("Added muxer byte counting probe");
-        }
+        // Note: Muxer probe removed - it doesn't output until BOTH audio+video flow
+        // Byte counting now happens on h264 encoder output probe below
+        LOGI("Got muxer element");
     }
     
     if (!videoAppSrc || !audioAppSrc) {
@@ -319,25 +304,36 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
         "format", GST_FORMAT_TIME,
         nullptr);
 
-    // Pad probe on x264enc src to inspect first few buffers (NAL headers, SPS/PPS/IDR presence)
+    // Pad probe on x264enc src to:
+    // 1. Count encoded video bytes for bitrate calculation
+    // 2. Inspect NAL headers for SPS/PPS/IDR presence
     if (videoEncoder) {
         GstPad* encSrc = gst_element_get_static_pad(videoEncoder, "src");
         if (encSrc) {
             gst_pad_add_probe(encSrc, GST_PAD_PROBE_TYPE_BUFFER,
-                [](GstPad*, GstPadProbeInfo* info, gpointer) -> GstPadProbeReturn {
-                    static int logged = 0;
-                    if (logged >= 10) return GST_PAD_PROBE_OK; // keep log noise low
+                [](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+                    auto* counter = static_cast<std::atomic<uint64_t>*>(user_data);
                     GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
                     if (!buf) return GST_PAD_PROBE_OK;
+                    
+                    // Count encoded bytes
+                    gsize bufSize = gst_buffer_get_size(buf);
+                    if (counter) {
+                        counter->fetch_add(bufSize, std::memory_order_relaxed);
+                    }
+                    
+                    // Debug logging for first 10 buffers
+                    static int logged = 0;
+                    if (logged >= 10) return GST_PAD_PROBE_OK;
+                    
                     GstMapInfo map;
                     if (!gst_buffer_map(buf, &map, GST_MAP_READ))
                         return GST_PAD_PROBE_OK;
                     
-                    // Scan ENTIRE buffer for NAL types (not just first 64 bytes)
+                    // Scan buffer for NAL types
                     bool hasIDR = false, hasSPS = false, hasPPS = false;
                     std::vector<int> nalTypes;
                     for (size_t i = 0; i + 4 < map.size; ++i) {
-                        // Look for start codes
                         if (map.data[i] == 0x00 && map.data[i+1] == 0x00) {
                             size_t hdr = 0;
                             if (map.data[i+2] == 0x01) {
@@ -347,7 +343,6 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
                             }
                             if (hdr > 0 && hdr < map.size) {
                                 int nt = map.data[hdr] & 0x1F;
-                                // Only add unique types
                                 bool found = false;
                                 for (int t : nalTypes) if (t == nt) { found = true; break; }
                                 if (!found) nalTypes.push_back(nt);
@@ -363,15 +358,17 @@ bool SrtStreamer::Impl::createPipeline(const StreamConfig& config) {
                         nalList << nalTypes[i] << (i + 1 == nalTypes.size() ? "" : ",");
                     }
                     
-                    LOGI("h264probe buf=%zu nal_types=[%s] IDR=%d SPS=%d PPS=%d", 
-                         map.size, nalList.str().c_str(), hasIDR, hasSPS, hasPPS);
+                    LOGI("h264probe buf=%zu nal_types=[%s] IDR=%d SPS=%d PPS=%d total=%llu", 
+                         map.size, nalList.str().c_str(), hasIDR, hasSPS, hasPPS,
+                         counter ? (unsigned long long)counter->load() : 0ULL);
                     
                     gst_buffer_unmap(buf, &map);
                     logged++;
                     return GST_PAD_PROBE_OK;
                 },
-                nullptr, nullptr);
+                &muxerBytesSent, nullptr);  // Reuse muxerBytesSent for h264 bytes
             gst_object_unref(encSrc);
+            LOGI("Added h264 byte counting probe on video encoder");
         }
         // Note: videoEncoder is unreffed in cleanup()
     }
